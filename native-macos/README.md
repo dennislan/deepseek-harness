@@ -41,6 +41,32 @@ pnpm run build
 open native-macos/dist/DeepSeekHarness-debug.app
 ```
 
+## Release Build
+
+For a self-contained distributable `.app` (no symlink dependency):
+
+```bash
+./native-macos/Scripts/release.sh           # full build (builds dsh + Swift)
+./native-macos/Scripts/release.sh --skip-dsh   # skip pnpm build
+./native-macos/Scripts/release.sh --dmg      # also create .dmg installer
+./native-macos/Scripts/release.sh --sign "Developer ID"  # codesign
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--skip-dsh` | Skip `pnpm run build` (dsh already up-to-date) |
+| `--strip` | Strip debug symbols from binary |
+| `--dmg` | Create `.dmg` disk image installer |
+| `--sign <id>` | Codesign with identity |
+| `--notarize` | Notarize after signing |
+| `--clean` | Run `pnpm run clean` first |
+
+**Output:** `native-macos/dist/DeepSeekHarness.app` (~107MB, fully self-contained)
+
+The script includes a smoke test: launches the built app and verifies HTTP 200 on port 3080.
+
 ## Upgrade Workflow
 
 When deepseek-harness is updated, the upgrade is a two-step process:
