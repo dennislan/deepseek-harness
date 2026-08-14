@@ -1,8 +1,6 @@
 import SwiftUI
 import WebKit
 
-// MARK: - Main View
-
 struct ContentView: View {
     let server: DshServer
     let bridge: BridgeManager
@@ -19,14 +17,11 @@ struct ContentView: View {
                     Image(systemName: "brain")
                         .font(.system(size: 48))
                         .foregroundStyle(.blue)
-
                     Text("DeepSeek Harness")
                         .font(.title2)
                         .fontWeight(.semibold)
-
                     ProgressView()
                         .scaleEffect(0.8)
-
                     Text(server.statusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -36,15 +31,34 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            // Listen for status changes
             NotificationCenter.default.addObserver(
                 forName: DshServer.statusChanged,
                 object: nil,
                 queue: .main
-            ) { notification in
-                Task {
-                    let srv = notification.object as? DshServer ?? server
-                    displayURL = await srv.url
-                    isReady = (await srv.status) == .running
+            ) { _ in
+                Task { @MainActor in
+                    let s = await server.status
+                    if s == .running {
+                        let u = await server.url
+                        displayURL = u
+                        isReady = (u != nil)
+                    } else if case .failed = s {
+                        // Keep showing the error in statusText
+                        isReady = false
+                    }
+                }
+            }
+            // Listen for URL changes (more direct)
+            NotificationCenter.default.addObserver(
+                forName: DshServer.urlChanged,
+                object: nil,
+                queue: .main
+            ) { _ in
+                Task { @MainActor in
+                    let u = await server.url
+                    displayURL = u
+                    isReady = (u != nil)
                 }
             }
         }
@@ -54,8 +68,6 @@ struct ContentView: View {
     }
 }
 
-// MARK: - WKWebView NSViewRepresentable
-
 struct WebViewContainer: NSViewRepresentable {
     let url: URL
     let bridge: BridgeManager
@@ -63,17 +75,14 @@ struct WebViewContainer: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.userContentController.add(bridge, name: "nativeBridge")
-
         let prefs = WKWebpagePreferences()
         prefs.allowsContentJavaScript = true
         config.defaultWebpagePreferences = prefs
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         bridge.webView = webView
 
-        // Inject JS bridge into every page
         let bridgeJS = """
             (function() {
                 window.__DSH_NATIVE_REQUESTS = window.__DSH_NATIVE_REQUESTS || {};
@@ -83,24 +92,17 @@ struct WebViewContainer: NSViewRepresentable {
                             var id = 'dsh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
                             window.__DSH_NATIVE_REQUESTS[id] = { resolve: resolve, reject: reject };
                             window.webkit.messageHandlers.nativeBridge.postMessage({
-                                type: 'native:request',
-                                id: id,
-                                method: method,
-                                params: params || {}
+                                type: 'native:request', id: id, method: method, params: params || {}
                             });
                         });
                     },
                     callSync: function(method, params) {
                         window.webkit.messageHandlers.nativeBridge.postMessage({
-                            type: 'native:request',
-                            id: null,
-                            method: method,
-                            params: params || {}
+                            type: 'native:request', id: null, method: method, params: params || {}
                         });
                         return true;
                     }
                 };
-
                 window.__dshHandleNativeResponse = function(msg) {
                     if (msg.id && window.__DSH_NATIVE_REQUESTS[msg.id]) {
                         var req = window.__DSH_NATIVE_REQUESTS[msg.id];
@@ -109,15 +111,12 @@ struct WebViewContainer: NSViewRepresentable {
                         else req.resolve(msg.data);
                     }
                 };
-
                 console.log('[DSH] Native bridge injected');
             })();
         """
-        let script = WKUserScript(source: bridgeJS,
-                                   injectionTime: .atDocumentStart,
-                                   forMainFrameOnly: true)
-        config.userContentController.addUserScript(script)
-
+        config.userContentController.addUserScript(
+            WKUserScript(source: bridgeJS, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        )
         return webView
     }
 
@@ -127,32 +126,23 @@ struct WebViewContainer: NSViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     class Coordinator: NSObject, WKNavigationDelegate {
-        func webView(_ webView: WKWebView,
-                     decidePolicyFor navigationAction: WKNavigationAction,
+        func webView(_ webView: WKWebView, decidePolicyFor navAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if let navURL = navigationAction.request.url,
-               navURL.scheme != "http", navURL.scheme != "https" {
-                NSWorkspace.shared.open(navURL)
+            if let url = navAction.request.url, url.scheme != "http", url.scheme != "https" {
+                NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
-                return
+            } else {
+                decisionHandler(.allow)
             }
-            decisionHandler(.allow)
         }
-
-        func webView(_ webView: WKWebView,
-                     didFail navigation: WKNavigation!,
-                     withError error: Error) {
-            NSLog("[DSH] WebView load error: \(error.localizedDescription)")
+        func webView(_ webView: WKWebView, didFail nav: WKNavigation!, withError error: Error) {
+            NSLog("[DSH] WebView error: \(error.localizedDescription)")
         }
-
-        func webView(_ webView: WKWebView,
-                     didFinish navigation: WKNavigation!) {
-            NSLog("[DSH] Page loaded: \(webView.url?.absoluteString ?? "unknown")")
+        func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
+            NSLog("[DSH] Page loaded: \(webView.url?.absoluteString ?? "?")")
         }
     }
 }
