@@ -98,7 +98,11 @@ actor DshServer {
         ]
 
         // Inherit all environment variables (DEEPSEEK_API_KEY etc.)
-        process.environment = ProcessInfo.processInfo.environment
+        var env = ProcessInfo.processInfo.environment
+        // Use a writable DSH_HOME so healProfilesModuleFallback can manage symlinks
+        // without hitting the sandbox-blocked ~/.dsh directory.
+        env["DSH_HOME"] = URL(fileURLWithPath: "/tmp").appendingPathComponent("dsh-\(ProcessInfo.processInfo.processIdentifier)").path
+        process.environment = env
 
         // Redirect stdio to pipes
         let stdout = Pipe()

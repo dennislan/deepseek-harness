@@ -35,15 +35,21 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onChange(of: server.url) { _, url in
-            if let url {
-                Task { @MainActor in displayURL = url; isReady = true }
+        .onAppear {
+            NotificationCenter.default.addObserver(
+                forName: DshServer.statusChanged,
+                object: nil,
+                queue: .main
+            ) { notification in
+                Task {
+                    let srv = notification.object as? DshServer ?? server
+                    displayURL = await srv.url
+                    isReady = (await srv.status) == .running
+                }
             }
         }
-        .onChange(of: server.status) { _, status in
-            if case .running = status {
-                Task { @MainActor in isReady = true }
-            }
+        .onDisappear {
+            NotificationCenter.default.removeObserver(self)
         }
     }
 }
@@ -101,18 +107,6 @@ struct WebViewContainer: NSViewRepresentable {
                         delete window.__DSH_NATIVE_REQUESTS[msg.id];
                         if (msg.error) req.reject(new Error(msg.error));
                         else req.resolve(msg.data);
-                    }
-                };
-
-                window.__dshEnv = {
-                    get: function(key) {
-                        return new Promise(function(resolve) {
-                            window.webkit.messageHandlers.nativeBridge.postMessage({
-                                type: 'native:get-env',
-                                id: null,
-                                key: key
-                            });
-                        });
                     }
                 };
 
