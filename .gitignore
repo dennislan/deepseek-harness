@@ -38,3 +38,6 @@ apps/web/dist/
 worktrees/
 .agents/worktrees/
 .typert-*/
+
+# macOS app build output
+native-macos/dist/

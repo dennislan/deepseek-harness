@@ -1,0 +1,33 @@
+name: DeepSeekHarness
+options:
+  bundleIdPrefix: com.deepseek
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  DeepSeekHarness:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes:
+          - "**/*.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.deepseek.harness
+        INFOPLIST_FILE: App/Info.plist
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        ENTITLEMENTS_DISABLE: YES
+        RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+    dependencies: []
+    dependenciesLinkLibraries: true
+
+packages: {}

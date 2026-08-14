@@ -1,0 +1,345 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0CCAA558355696D2C99E9DB3 /* DeepSeekHarnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472562E84736911591445FE6 /* DeepSeekHarnessApp.swift */; };
+		4C080F89573199F6A4E88C24 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8CC34F801B476AE0F886958 /* ContentView.swift */; };
+		7718FCD09AEFBE77DEEC8639 /* DshServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52F07381B49498A4ED9F47FA /* DshServer.swift */; };
+		7DB39306DA1081E1757B50EB /* DeepSeekHarness.xcodeproj in Resources */ = {isa = PBXBuildFile; fileRef = E8082C757D6BC5CF675C4357 /* DeepSeekHarness.xcodeproj */; };
+		B0F7F21DCE85F1494A8208FC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DA7BF6F43FE27E7BD3F94632 /* Assets.xcassets */; };
+		C67A6FB231D4DCF866E5E337 /* BridgeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE9C7BEB570F5CF0D7B1441B /* BridgeManager.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		472562E84736911591445FE6 /* DeepSeekHarnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSeekHarnessApp.swift; sourceTree = "<group>"; };
+		4DE07A5BE9CCF2D0829B1ABB /* DeepSeekHarness.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSeekHarness.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		52F07381B49498A4ED9F47FA /* DshServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DshServer.swift; sourceTree = "<group>"; };
+		D8CC34F801B476AE0F886958 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		DA7BF6F43FE27E7BD3F94632 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E8082C757D6BC5CF675C4357 /* DeepSeekHarness.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = DeepSeekHarness.xcodeproj; sourceTree = "<group>"; };
+		FE9C7BEB570F5CF0D7B1441B /* BridgeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeManager.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		25D9CC7BBAD612BC748CDCDA /* Server */ = {
+			isa = PBXGroup;
+			children = (
+				52F07381B49498A4ED9F47FA /* DshServer.swift */,
+			);
+			path = Server;
+			sourceTree = "<group>";
+		};
+		274963A7A77A2FFAAE1F50B9 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4DE07A5BE9CCF2D0829B1ABB /* DeepSeekHarness.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		27ECA1BDF8A1434F2414F55E /* App */ = {
+			isa = PBXGroup;
+			children = (
+				DA7BF6F43FE27E7BD3F94632 /* Assets.xcassets */,
+				E8082C757D6BC5CF675C4357 /* DeepSeekHarness.xcodeproj */,
+				E9478D2F1DAEA91A5913A07B /* App */,
+				D769649675F25B27BCC8C5DE /* NativeBridge */,
+				25D9CC7BBAD612BC748CDCDA /* Server */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		6CCB4B7610BCEDDD2C17490F = {
+			isa = PBXGroup;
+			children = (
+				27ECA1BDF8A1434F2414F55E /* App */,
+				274963A7A77A2FFAAE1F50B9 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D769649675F25B27BCC8C5DE /* NativeBridge */ = {
+			isa = PBXGroup;
+			children = (
+				FE9C7BEB570F5CF0D7B1441B /* BridgeManager.swift */,
+			);
+			path = NativeBridge;
+			sourceTree = "<group>";
+		};
+		E9478D2F1DAEA91A5913A07B /* App */ = {
+			isa = PBXGroup;
+			children = (
+				D8CC34F801B476AE0F886958 /* ContentView.swift */,
+				472562E84736911591445FE6 /* DeepSeekHarnessApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D7196182A4C9C09AC2C3AC59 /* DeepSeekHarness */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 025525313646C554F430885E /* Build configuration list for PBXNativeTarget "DeepSeekHarness" */;
+			buildPhases = (
+				BFF5343DD616E71485EF67E4 /* Sources */,
+				DA7B5B88A513BC534044DE69 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DeepSeekHarness;
+			packageProductDependencies = (
+			);
+			productName = DeepSeekHarness;
+			productReference = 4DE07A5BE9CCF2D0829B1ABB /* DeepSeekHarness.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D95D169C0E43121AA68F97DE /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 217FC1FBFACD779F4907CB1D /* Build configuration list for PBXProject "DeepSeekHarness" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 6CCB4B7610BCEDDD2C17490F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 274963A7A77A2FFAAE1F50B9 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D7196182A4C9C09AC2C3AC59 /* DeepSeekHarness */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		DA7B5B88A513BC534044DE69 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0F7F21DCE85F1494A8208FC /* Assets.xcassets in Resources */,
+				7DB39306DA1081E1757B50EB /* DeepSeekHarness.xcodeproj in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		BFF5343DD616E71485EF67E4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C67A6FB231D4DCF866E5E337 /* BridgeManager.swift in Sources */,
+				4C080F89573199F6A4E88C24 /* ContentView.swift in Sources */,
+				0CCAA558355696D2C99E9DB3 /* DeepSeekHarnessApp.swift in Sources */,
+				7718FCD09AEFBE77DEEC8639 /* DshServer.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		156C55CD30314D1B1D02DB6E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		4E7CE00A19D415B7AA6D8881 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENTITLEMENTS_DISABLE = YES;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.deepseek.harness;
+				RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		8B6E90DBA57C38C897AC6EE2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C2419E3BE49D0F0B1FBEF02D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENTITLEMENTS_DISABLE = YES;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.deepseek.harness;
+				RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		025525313646C554F430885E /* Build configuration list for PBXNativeTarget "DeepSeekHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4E7CE00A19D415B7AA6D8881 /* Debug */,
+				C2419E3BE49D0F0B1FBEF02D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		217FC1FBFACD779F4907CB1D /* Build configuration list for PBXProject "DeepSeekHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8B6E90DBA57C38C897AC6EE2 /* Debug */,
+				156C55CD30314D1B1D02DB6E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = D95D169C0E43121AA68F97DE /* Project object */;
+}
