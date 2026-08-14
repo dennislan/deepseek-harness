@@ -9,6 +9,9 @@
 #
 # Usage:
 #   ./native-macos/Scripts/build.sh              # build debug (default)
+#
+# Note: The app sets DSH_HOME=/tmp/dsh-<pid> at runtime so dsh can manage
+# its profile symlinks without hitting the sandbox-blocked ~/.dsh directory.
 #   ./native-macos/Scripts/build.sh release      # build release
 #   ./native-macos/Scripts/build.sh --clean      # clean before build
 #   ./native-macos/Scripts/build.sh --skip-dsh   # skip pnpm build
