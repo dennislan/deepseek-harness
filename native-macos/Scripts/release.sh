@@ -135,42 +135,61 @@ SRC="$PROJECT_ROOT"
 # Copy apps (CLI lib + frontend dist) — use cp -R to preserve structure
 mkdir -p "$DSH_ROOT/apps"
 if [ -d "$SRC/apps/cli" ]; then
-    cp -R "$SRC/apps/cli/." "$DSH_ROOT/apps/cli/" 2>/dev/null ||         cp -R "$SRC/apps/cli" "$DSH_ROOT/apps/cli/" 2>/dev/null || true
+    cp -R "$SRC/apps/cli/." "$DSH_ROOT/apps/cli/" 2>/dev/null \
+        || cp -R "$SRC/apps/cli" "$DSH_ROOT/apps/cli/" 2>/dev/null \
+        || fail "Failed to copy apps/cli"
     info "  apps/cli ($(du -sh "$DSH_ROOT/apps/cli" 2>/dev/null | cut -f1 || echo "?"))"
 fi
 if [ -d "$SRC/apps/web/dist" ]; then
     mkdir -p "$DSH_ROOT/apps/web"
-    cp -R "$SRC/apps/web/dist/." "$DSH_ROOT/apps/web/dist/" 2>/dev/null || true
+    cp -R "$SRC/apps/web/dist/." "$DSH_ROOT/apps/web/dist/" 2>/dev/null \
+        || fail "Failed to copy apps/web/dist"
     info "  apps/web/dist ($(du -sh "$DSH_ROOT/apps/web/dist" | cut -f1))"
 fi
 
-# Copy packages (all harness plugins)
+# Copy packages (all harness plugins), keeping node_modules: the pnpm
+# symlink farm must survive for runtime resolution. Copy links as links
+# (rsync -a, not -aL): every link is relative and its target (packages/,
+# vendor/, node_modules/.pnpm/) is bundled alongside. Dereferencing (-aL)
+# re-materializes the whole .pnpm store per link and can recurse.
 if [ -d "$SRC/packages" ]; then
-    # Use rsync with exclusion filters for speed
-    rsync -a \
-        --exclude='node_modules' \
+    if rsync -a \
         --exclude='.git' \
         --exclude='*.test.*' \
         --exclude='*.spec.*' \
         --exclude='__tests__' \
         --exclude='fixtures' \
-        "$SRC/packages/" "$DSH_ROOT/packages/" \
-        2>/dev/null && \
-        info "  packages ($(du -sh "$DSH_ROOT/packages" | cut -f1))" || \
-        warn "rsync failed, falling back to cp" && \
-        cp -R "$SRC/packages/." "$DSH_ROOT/packages/" 2>/dev/null || true
+        "$SRC/packages/" "$DSH_ROOT/packages/"; then
+        info "  packages ($(du -sh "$DSH_ROOT/packages" | cut -f1))"
+    else
+        warn "rsync failed, falling back to cp"
+        cp -R "$SRC/packages/." "$DSH_ROOT/packages/" \
+            || fail "Failed to copy packages"
+    fi
+fi
+
+# Copy root node_modules (pnpm virtual store). Third-party packages live
+# under .pnpm; workspace links under node_modules/@deepseek-ai point into
+# packages/ (bundled above). Preserved as links, like packages/.
+if [ -d "$SRC/node_modules" ]; then
+    rsync -a "$SRC/node_modules/" "$DSH_ROOT/node_modules/" \
+        || fail "Failed to copy root node_modules"
+    info "  node_modules ($(du -sh "$DSH_ROOT/node_modules" | cut -f1))"
+else
+    fail "Root node_modules missing — run pnpm install first"
 fi
 
 # Copy vendor
 if [ -d "$SRC/vendor" ]; then
-    cp -R "$SRC/vendor/." "$DSH_ROOT/vendor/" 2>/dev/null || true
+    cp -R "$SRC/vendor/." "$DSH_ROOT/vendor/" 2>/dev/null || fail "Failed to copy vendor"
     info "  vendor ($(du -sh "$DSH_ROOT/vendor" | cut -f1))"
 fi
 
-# Copy native landlock binary if present
+# Copy native landlock binary if present (as a subdir: node_modules links
+# resolve @deepseek-ai/node-addon-landlock-run → native/landlock-run/…)
 if [ -d "$SRC/native/landlock-run" ]; then
     mkdir -p "$DSH_ROOT/native"
-    cp -R "$SRC/native/landlock-run/." "$DSH_ROOT/native/" 2>/dev/null || true
+    cp -R "$SRC/native/landlock-run" "$DSH_ROOT/native/" 2>/dev/null || fail "Failed to copy native/landlock-run"
     info "  native/landlock-run"
 fi
 
@@ -180,9 +199,6 @@ for f in package.json pnpm-workspace.yaml tsconfig.host.json tsconfig.client.jso
     [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DSH_ROOT/$f"
 done
 info "  config files"
-
-# Remove any remaining node_modules (belt and suspenders)
-find "$DSH_ROOT" -name "node_modules" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 DSH_ROOT_SIZE=$(du -sh "$DSH_ROOT" | cut -f1)
 info "dsh-root total: $DSH_ROOT_SIZE"

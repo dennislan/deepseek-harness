@@ -109,24 +109,34 @@ cp "$TMP_BINARY" "$APP_DIR/Contents/MacOS/$BINARY_NAME"
 chmod +x "$APP_DIR/Contents/MacOS/$BINARY_NAME"
 
 if [ "$FULL_BUNDLE" = true ]; then
-    # Full bundle: copy only essential dsh artifacts (no node_modules)
+    # Full bundle: copy the dsh runtime including the pnpm node_modules
+    # symlink farm (links preserved, as in release.sh — targets are bundled
+    # alongside; dereferencing re-materializes the .pnpm store per link).
     DSH_ROOT="$APP_DIR/Contents/Resources/dsh-root"
     mkdir -p "$DSH_ROOT"
     SRC="$PROJECT_ROOT"
 
     # Copy essential dirs
-    for dir in apps packages native; do
-        [ -d "$SRC/$dir" ] && cp -R "$SRC/$dir/." "$DSH_ROOT/$dir/" 2>/dev/null &
+    for dir in apps packages vendor native; do
+        if [ -d "$SRC/$dir" ]; then
+            cp -R "$SRC/$dir/." "$DSH_ROOT/$dir/" || error "Failed to copy $dir"
+        fi
     done
+    if [ -d "$SRC/node_modules" ]; then
+        rsync -a "$SRC/node_modules/" "$DSH_ROOT/node_modules/" \
+            || error "Failed to copy root node_modules"
+    else
+        error "Root node_modules missing — run pnpm install first"
+    fi
     for f in package.json pnpm-workspace.yaml tsconfig.host.json tsconfig.client.json \
              tsconfig.base.json tsconfig.base.client.json .npmrc; do
-        [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DSH_ROOT/$f" 2>/dev/null &
+        if [ -f "$SRC/$f" ]; then
+            cp "$SRC/$f" "$DSH_ROOT/$f" || error "Failed to copy $f"
+        fi
     done
-    wait
 
-    # Strip noise
-    find "$DSH_ROOT" -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
-    rm -rf "$DSH_ROOT/.git" "$DSH_ROOT/.agents" 2>/dev/null || true
+    # Repo-only dirs are never copied; guard in case they appear
+    rm -rf "$DSH_ROOT/.git" "$DSH_ROOT/.agents"
     info "✓ Full bundle: $(du -sh "$DSH_ROOT" | cut -f1)"
 else
     # Lightweight: symlink to project root (fastest upgrade path)
