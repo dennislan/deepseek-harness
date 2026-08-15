@@ -77,13 +77,26 @@ actor DshServer {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: nodePath)
         process.arguments = [binPath.path, "--profile", "web", "--port", "\(port)"]
-        process.environment = ProcessInfo.processInfo.environment
 
-        // Use a writable DSH_HOME
+        // Persist user data under ~/.dsh; an explicit DSH_HOME wins (matches
+        // dsh-home-paths precedence: configured > $DSH_HOME > ~/.dsh).
         var env = process.environment ?? [:]
-        env["DSH_HOME"] = URL(fileURLWithPath: "/tmp").appendingPathComponent(
-            "dsh-\(ProcessInfo.processInfo.processIdentifier)"
-        ).path
+        let dshHome = env["DSH_HOME"]?.trimmingCharacters(in: .whitespaces) ?? ""
+        if dshHome.isEmpty {
+            let defaultHome = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".dsh")
+            do {
+                try FileManager.default.createDirectory(
+                    at: defaultHome,
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                status = .failed("无法创建 DSH_HOME 目录 (\(defaultHome.path)): \(error.localizedDescription)")
+                postStatusChanged()
+                return
+            }
+            env["DSH_HOME"] = defaultHome.path
+        }
         process.environment = env
 
         do {
