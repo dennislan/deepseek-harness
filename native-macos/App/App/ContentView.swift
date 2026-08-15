@@ -6,6 +6,8 @@ struct ContentView: View {
     let bridge: BridgeManager
     @State private var displayURL: URL?
     @State private var isReady = false
+    @State private var statusObserver: NSObjectProtocol?
+    @State private var urlObserver: NSObjectProtocol?
 
     var body: some View {
         ZStack {
@@ -32,7 +34,7 @@ struct ContentView: View {
         }
         .onAppear {
             // Listen for status changes
-            NotificationCenter.default.addObserver(
+            statusObserver = NotificationCenter.default.addObserver(
                 forName: DshServer.statusChanged,
                 object: nil,
                 queue: .main
@@ -50,7 +52,7 @@ struct ContentView: View {
                 }
             }
             // Listen for URL changes (more direct)
-            NotificationCenter.default.addObserver(
+            urlObserver = NotificationCenter.default.addObserver(
                 forName: DshServer.urlChanged,
                 object: nil,
                 queue: .main
@@ -63,7 +65,14 @@ struct ContentView: View {
             }
         }
         .onDisappear {
-            NotificationCenter.default.removeObserver(self)
+            if let statusObserver {
+                NotificationCenter.default.removeObserver(statusObserver)
+            }
+            if let urlObserver {
+                NotificationCenter.default.removeObserver(urlObserver)
+            }
+            statusObserver = nil
+            urlObserver = nil
         }
     }
 }
