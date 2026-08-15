@@ -24,7 +24,7 @@
 
 import { createRequire } from 'node:module'
 import {
-  existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync,
+  existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
@@ -184,7 +184,21 @@ function ensureSymlink(link: string, target: string): void {
     if (readlinkSync(link) === target) return
     // unlink deletes the reparse point itself on Windows too; rmSync treats a
     // junction as a directory and throws EISDIR unless recursive.
-    unlinkSync(link)
+    try {
+      unlinkSync(link)
+    } catch {
+      // unlinkSync can fail with EPERM on some platforms (macOS App Sandbox,
+      // stale permissions, or when the link target is on a read-only volume).
+      // Try rmSync as a fallback; if that also fails, proceed to symlinkSync
+      // — if the existing link already points to the correct target (e.g.
+      // another process healed it concurrently), the EEXIST check below
+      // accepts it. Otherwise the symlinkSync error surfaces.
+      try {
+        rmSync(link, { recursive: true, force: true })
+      } catch {
+        // Both deletion paths failed; continue to symlinkSync attempt.
+      }
+    }
   }
   try {
     symlinkSync(target, link, 'junction')

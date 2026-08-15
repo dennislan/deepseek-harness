@@ -12,6 +12,7 @@
 #   ./native-macos/Scripts/release.sh --sign <id>    codesign with identity (default: ad-hoc)
 #   ./native-macos/Scripts/release.sh --notarize     notarize after signing
 #   ./native-macos/Scripts/release.sh --clean        pnpm run clean first
+#   ./native-macos/Scripts/release.sh --no-prune     keep dev deps and build artifacts (debug)
 #
 # Outputs:
 #   native-macos/dist/DeepSeekHarness.app   (self-contained, ready to ship)
@@ -38,6 +39,7 @@ CREATE_DMG=false
 CODE_SIGN_ID=""
 NOTARIZE=false
 CLEAN_FIRST=false
+PRUNE=true
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -60,6 +62,7 @@ while [ $# -gt 0 ]; do
             shift ;;
         --notarize)   NOTARIZE=true; shift ;;
         --clean)      CLEAN_FIRST=true; shift ;;
+        --no-prune)   PRUNE=false; shift ;;
         *) echo "Unknown flag: $1" >&2; exit 1 ;;
     esac
 done
@@ -152,26 +155,110 @@ mkdir -p "$DSH_ROOT"
 
 SRC="$PROJECT_ROOT"
 
-# Copy apps (CLI lib + frontend dist) — use cp -R to preserve structure
+# ── Prune excludes ────────────────────────────────────────────────────────────
+# When PRUNE=true (default), strip dev-only packages from node_modules/.pnpm and
+# build artifacts from packages/ that are dead weight at runtime. The entries are
+# safe to remove: dev toolchain (typescript, oxlint, vitest, …), disabled-by-
+# default subagent SDK binaries (@openai/codex, @anthropic-ai/claude-agent-sdk-
+# darwin-arm64 — both `disabled: true` in every shipped agent preset), and
+# non-runtime file types (*.map, *.d.ts, *.ts source, *.tsbuildinfo, .DS_Store).
+# Broken symlinks under node_modules/<pkg> are harmless — they only resolve on
+# require(), which the runtime never issues for these packages.
+PNPM_DEV_EXCLUDES=(
+    --exclude='.pnpm/typescript@*'
+    --exclude='.pnpm/tsdown@*'
+    --exclude='.pnpm/tsx@*'
+    --exclude='.pnpm/vite-tsconfig-paths@*'
+    --exclude='.pnpm/vitest@*'
+    --exclude='.pnpm/@vitest+*@*'
+    --exclude='.pnpm/oxlint@*'
+    --exclude='.pnpm/oxlint-tsgolint@*'
+    --exclude='.pnpm/@oxlint-tsgolint+*@*'
+    --exclude='.pnpm/knip@*'
+    --exclude='.pnpm/publint@*'
+    --exclude='.pnpm/lefthook@*'
+    --exclude='.pnpm/lefthook-darwin-arm64@*'
+    --exclude='.pnpm/@stylistic+*@*'
+    --exclude='.pnpm/eslint-plugin-sonarjs@*'
+    --exclude='.pnpm/@testing-library+*@*'
+    --exclude='.pnpm/fast-check@*'
+    --exclude='.pnpm/jsdom@*'
+    --exclude='.pnpm/jscpd@*'
+    --exclude='.pnpm/lightningcss@*'
+    --exclude='.pnpm/mermaid@*'
+    --exclude='.pnpm/@mermaid-js+*@*'
+    --exclude='.pnpm/mdast-util-*@*'
+    --exclude='.pnpm/micromark-*@*'
+    --exclude='.pnpm/istanbul-lib-report@*'
+    --exclude='.pnpm/smol-toml@*'
+    --exclude='.pnpm/spdx-expression-parse@*'
+    --exclude='.pnpm/@agentclientprotocol+sdk@*'
+    --exclude='.pnpm/@yarnpkg+*@*'
+    --exclude='.pnpm/@types+*@*'
+    --exclude='.pnpm/@rolldown+*@*'
+    --exclude='.pnpm/@oxlint+binding*@*'
+    --exclude='.pnpm/esbuild@*'
+    --exclude='.pnpm/@esbuild+*@*'
+    --exclude='.pnpm/vite@*'
+    --exclude='.pnpm/playwright@*'
+    --exclude='.pnpm/playwright-core@*'
+    --exclude='.pnpm/@openai+codex@*'
+    --exclude='.pnpm/@anthropic-ai+claude-agent-sdk-darwin-arm64@*'
+)
+
+PACKAGES_ARTIFACT_EXCLUDES=(
+    --exclude='*.map'
+    --exclude='*.d.ts'
+    --exclude='*.d.ts.map'
+    --exclude='*.ts'
+    --exclude='*.tsbuildinfo'
+    --exclude='.DS_Store'
+    --exclude='README*'
+    --exclude='tsconfig*.json'
+    --exclude='tsdown.config.*'
+)
+
+APPS_CLI_EXCLUDES=(
+    --exclude='src/'
+    --exclude='tests/'
+    --exclude='reference/'
+    --exclude='composition.md'
+    --exclude='README*'
+    --exclude='README.i18n.yaml'
+    --exclude='tsconfig.json'
+    --exclude='tsdown.config.ts'
+    --exclude='.DS_Store'
+)
+
+if [ "$PRUNE" = false ]; then
+    PNPM_DEV_EXCLUDES=()
+    PACKAGES_ARTIFACT_EXCLUDES=()
+    APPS_CLI_EXCLUDES=()
+    info "Pruning disabled (--no-prune); bundle will include dev deps and artifacts"
+fi
+
+# ── apps/ ─────────────────────────────────────────────────────────────────────
+# CLI: only lib/ + config/ + package.json are needed at runtime (per the
+# package.json `files` field). Web: only the built dist/.
 mkdir -p "$DSH_ROOT/apps"
 if [ -d "$SRC/apps/cli" ]; then
-    cp -R "$SRC/apps/cli/." "$DSH_ROOT/apps/cli/" 2>/dev/null \
-        || cp -R "$SRC/apps/cli" "$DSH_ROOT/apps/cli/" 2>/dev/null \
+    rsync -a "${APPS_CLI_EXCLUDES[@]}" \
+        "$SRC/apps/cli/" "$DSH_ROOT/apps/cli/" \
         || fail "Failed to copy apps/cli"
     info "  apps/cli ($(du -sh "$DSH_ROOT/apps/cli" 2>/dev/null | cut -f1 || echo "?"))"
 fi
 if [ -d "$SRC/apps/web/dist" ]; then
     mkdir -p "$DSH_ROOT/apps/web"
-    cp -R "$SRC/apps/web/dist/." "$DSH_ROOT/apps/web/dist/" 2>/dev/null \
+    rsync -a \
+        --exclude='.DS_Store' \
+        "$SRC/apps/web/dist/" "$DSH_ROOT/apps/web/dist/" \
         || fail "Failed to copy apps/web/dist"
     info "  apps/web/dist ($(du -sh "$DSH_ROOT/apps/web/dist" | cut -f1))"
 fi
 
-# Copy packages (all harness plugins), keeping node_modules: the pnpm
-# symlink farm must survive for runtime resolution. Copy links as links
-# (rsync -a, not -aL): every link is relative and its target (packages/,
-# vendor/, node_modules/.pnpm/) is bundled alongside. Dereferencing (-aL)
-# re-materializes the whole .pnpm store per link and can recurse.
+# ── packages/ ─────────────────────────────────────────────────────────────────
+# Copy packages (all harness plugins). rsync -a preserves symlinks; any
+# workspace symlinks are resolved to real files in the post-assembly step.
 if [ -d "$SRC/packages" ]; then
     if rsync -a \
         --exclude='.git' \
@@ -179,6 +266,7 @@ if [ -d "$SRC/packages" ]; then
         --exclude='*.spec.*' \
         --exclude='__tests__' \
         --exclude='fixtures' \
+        "${PACKAGES_ARTIFACT_EXCLUDES[@]}" \
         "$SRC/packages/" "$DSH_ROOT/packages/"; then
         info "  packages ($(du -sh "$DSH_ROOT/packages" | cut -f1))"
     else
@@ -188,20 +276,33 @@ if [ -d "$SRC/packages" ]; then
     fi
 fi
 
-# Copy root node_modules (pnpm virtual store). Third-party packages live
-# under .pnpm; workspace links under node_modules/@deepseek-ai point into
-# packages/ (bundled above). Preserved as links, like packages/.
+# ── node_modules/ ────────────────────────────────────────────────────────────
+# Root node_modules (pnpm virtual store). rsync -a preserves the pnpm
+# symlink farm so circular workspace dependencies do not cause infinite
+# recursion. The post-assembly step then dereferences top-level symlinks
+# (node_modules/<pkg>, node_modules/@scope/<pkg>) into real files, while
+# keeping .pnpm/ internal symlinks (relative paths that resolve correctly
+# at any install path).
 if [ -d "$SRC/node_modules" ]; then
-    rsync -a "$SRC/node_modules/" "$DSH_ROOT/node_modules/" \
+    rsync -a "${PNPM_DEV_EXCLUDES[@]}" \
+        "$SRC/node_modules/" "$DSH_ROOT/node_modules/" \
         || fail "Failed to copy root node_modules"
     info "  node_modules ($(du -sh "$DSH_ROOT/node_modules" | cut -f1))"
 else
     fail "Root node_modules missing — run pnpm install first"
 fi
 
-# Copy vendor
+# ── vendor/ ──────────────────────────────────────────────────────────────────
 if [ -d "$SRC/vendor" ]; then
-    cp -R "$SRC/vendor/." "$DSH_ROOT/vendor/" 2>/dev/null || fail "Failed to copy vendor"
+    rsync -a \
+        --exclude='.DS_Store' \
+        --exclude='*.tsbuildinfo' \
+        --exclude='*.map' \
+        --exclude='*.d.ts' \
+        --exclude='*.d.ts.map' \
+        "$SRC/vendor/." "$DSH_ROOT/vendor/" 2>/dev/null \
+        || cp -R "$SRC/vendor/." "$DSH_ROOT/vendor/" 2>/dev/null \
+        || fail "Failed to copy vendor"
     info "  vendor ($(du -sh "$DSH_ROOT/vendor" | cut -f1))"
 fi
 
@@ -209,7 +310,10 @@ fi
 # resolve @deepseek-ai/node-addon-landlock-run → native/landlock-run/…)
 if [ -d "$SRC/native/landlock-run" ]; then
     mkdir -p "$DSH_ROOT/native"
-    cp -R "$SRC/native/landlock-run" "$DSH_ROOT/native/" 2>/dev/null || fail "Failed to copy native/landlock-run"
+    rsync -a --exclude='.DS_Store' --exclude='*.tsbuildinfo' \
+        "$SRC/native/landlock-run/" "$DSH_ROOT/native/landlock-run/" 2>/dev/null \
+        || cp -R "$SRC/native/landlock-run" "$DSH_ROOT/native/" 2>/dev/null \
+        || fail "Failed to copy native/landlock-run"
     info "  native/landlock-run"
 fi
 
@@ -219,6 +323,50 @@ for f in package.json pnpm-workspace.yaml tsconfig.host.json tsconfig.client.jso
     [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DSH_ROOT/$f"
 done
 info "  config files"
+
+# ── Post-assembly: dereference top-level symlinks ────────────────────────────
+# Replace top-level symlinks under node_modules/ (e.g. node_modules/<pkg> →
+# .pnpm/<pkg>@<ver>/node_modules/<pkg>, or node_modules/@scope/<pkg> →
+# ../../packages/<pkg>) with real file copies so the bundle is self-contained
+# and works at any install path (/Applications, ~/Apps, …).
+#
+# Symlinks inside node_modules/.pnpm/ are PRESERVED: they use relative paths
+# that resolve correctly wherever the .pnpm/ tree lives, and dereferencing
+# them would trigger infinite recursion on circular workspace dependencies.
+#
+# Dangling symlinks (from pruned dev-only .pnpm entries) are deleted.
+info "  dereferencing top-level symlinks..."
+DEREF_COUNT=0
+DANGLING_COUNT=0
+TMP_LINKS="$TMP_DIR/top-level-links.txt"
+find "$DSH_ROOT/node_modules" -maxdepth 3 -type l \
+    ! -path '*/.pnpm/*' -print0 2>/dev/null > "$TMP_LINKS"
+while IFS= read -r -d '' link; do
+    target="$(readlink -f "$link" 2>/dev/null || true)"
+    if [ -n "$target" ] && [ -e "$target" ]; then
+        rm "$link"
+        cp -R "$target" "$link"
+        DEREF_COUNT=$((DEREF_COUNT + 1))
+    else
+        rm -f "$link"
+        DANGLING_COUNT=$((DANGLING_COUNT + 1))
+    fi
+done < "$TMP_LINKS"
+rm -f "$TMP_LINKS"
+info "  dereferenced $DEREF_COUNT symlinks, removed $DANGLING_COUNT dangling"
+
+# ── Post-assembly cleanup ─────────────────────────────────────────────────────
+# Sweep any .DS_Store and *.tsbuildinfo that slipped through (e.g. in
+# node_modules third-party packages or apps/web/dist). Also delete all
+# dangling symlinks (pointing to pruned dev-only packages) across the entire
+# bundle so Node.js module resolution never hits a broken link.
+if [ "$PRUNE" = true ]; then
+    find "$DSH_ROOT" -name '.DS_Store' -delete 2>/dev/null || true
+    find "$DSH_ROOT/packages" -name '*.tsbuildinfo' -delete 2>/dev/null || true
+fi
+# Delete dangling symlinks regardless of PRUNE mode — broken links cause
+# EPERM or ENOENT errors in Node.js module resolution at runtime.
+find "$DSH_ROOT" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
 
 DSH_ROOT_SIZE=$(du -sh "$DSH_ROOT" | cut -f1)
 info "dsh-root total: $DSH_ROOT_SIZE"
@@ -383,11 +531,11 @@ if [ "$CREATE_DMG" = true ]; then
 PLIST
 
     hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_DIR" \
-        -fs HFS+ -format UDRW "$TMP_DIR/$APP_NAME_temp.dmg" 2>/dev/null \
+        -fs HFS+ -format UDRW "$TMP_DIR/${APP_NAME}_temp.dmg" 2>/dev/null \
         || fail "DMG creation failed"
-    hdiutil convert "$TMP_DIR/$APP_NAME_temp.dmg" \
+    hdiutil convert "$TMP_DIR/${APP_NAME}_temp.dmg" \
         -format UDZO -o "$DMG_PATH" 2>/dev/null || fail "DMG conversion failed"
-    rm -rf "$DMG_DIR" "$TMP_DIR/$APP_NAME_temp.dmg"
+    rm -rf "$DMG_DIR" "$TMP_DIR/${APP_NAME}_temp.dmg"
     info "DMG: $(du -h "$DMG_PATH" | cut -f1)"
 fi
 
