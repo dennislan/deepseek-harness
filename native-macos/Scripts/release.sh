@@ -72,6 +72,13 @@ info()  { echo -e "${GREEN}✓${NC} $*"; }
 warn()  { echo -e "${YELLOW}⚠${NC} $*"; }
 fail()  { echo -e "${RED}✗${NC} $*"; exit 1; }
 
+ARCH="${ARCH:-arm64}"
+case "$ARCH" in
+    *[!a-zA-Z0-9_-]*)
+        echo -e "${RED}✗${NC} Illegal ARCH value '$ARCH' (allowed: [a-zA-Z0-9_-])" >&2
+        exit 1 ;;
+esac
+
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 trap 'rm -rf "$TMP_DIR"' EXIT
 mkdir -p "$TMP_DIR" "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
@@ -98,7 +105,7 @@ step "Compiling Swift binary (release -O)..."
 BINARY_PATH="$TMP_DIR/$BINARY_NAME"
 
 xcrun swiftc \
-    -target arm64-apple-macosx14.0 \
+    -target "$ARCH-apple-macosx14.0" \
     -O \
     -sdk "$SDK_PATH" \
     -I"$SDK_PATH/System/Library/Frameworks/SwiftUI.framework/Headers" \

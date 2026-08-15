@@ -51,6 +51,11 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 step()  { echo -e "${CYAN}▶${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
+ARCH="${ARCH:-arm64}"
+case "$ARCH" in
+    *[!a-zA-Z0-9_-]*) error "Illegal ARCH value '$ARCH' (allowed: [a-zA-Z0-9_-])" ;;
+esac
+
 # ---------------------------------------------------------------------------
 # Step 1: Build dsh (CLI + frontend)
 # ---------------------------------------------------------------------------
@@ -73,7 +78,7 @@ mkdir -p "$(dirname "$TMP_BINARY")" "$MODULE_CACHE"
 
 SWIFT_CMD=(
     xcrun swiftc
-    -target arm64-apple-macosx14.0
+    -target "$ARCH-apple-macosx14.0"
     "-sdk" "$SDK_PATH"
     -I"$SDK_PATH/System/Library/Frameworks/SwiftUI.framework/Headers"
     -module-cache-path "$MODULE_CACHE"
