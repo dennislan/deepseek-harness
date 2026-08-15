@@ -7,6 +7,7 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var displayURL: URL?
     @State private var isReady = false
+    @State private var statusText: String = "Loading..."
     @State private var statusObserver: NSObjectProtocol?
     @State private var urlObserver: NSObjectProtocol?
 
@@ -27,7 +28,7 @@ struct ContentView: View {
                         .fontWeight(.semibold)
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text(server.statusText)
+                    Text(statusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal)
@@ -51,6 +52,7 @@ struct ContentView: View {
             ) { _ in
                 Task { @MainActor in
                     let s = await server.status
+                    statusText = await server.statusText
                     if s == .running {
                         let u = await server.url
                         displayURL = u
