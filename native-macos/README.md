@@ -9,8 +9,9 @@ No Electron. No WebView wrapper libraries. Just a thin Swift shell that hosts th
 ```
 DeepSeekHarness.app/
 ├── Contents/MacOS/DeepSeekHarness          # Compiled Swift binary
-├── Contents/Resources/dsh-root/            # Symlink → project root (dev)
-│                                              or copy of apps/packages (release)
+├── Contents/Resources/dsh-root/            # Symlink → project root (debug)
+│                                              or full dsh tree incl. pnpm
+│                                              node_modules symlink farm (release)
 └── Contents/Info.plist
 ```
 
@@ -28,6 +29,19 @@ The app finds the dsh project in this order:
 3. Three levels up from the running binary (swiftc dev build)
 4. Fallback: `/Users/dennis/AIProjects/deepseek-harness`
 
+## Persistent State (`~/.dsh`)
+
+User data persists under `~/.dsh`; `DshServer` creates the directory before
+launching dsh, and an explicit `DSH_HOME` environment variable overrides the
+default (same precedence as `dsh-home-paths`):
+
+- `profiles/` — the `web` profile, created on first launch and reused afterwards
+- `sessions/` — session logs, kept across app restarts
+- `storages/` — settings, credential references, and anonymous identity
+
+Profiles and sessions are **no longer** written to a per-launch
+`/tmp/dsh-<pid>` directory: they survive app restarts.
+
 ## Quick Start
 
 ```bash
@@ -40,6 +54,10 @@ pnpm run build
 # 3. Run
 open native-macos/dist/DeepSeekHarness-debug.app
 ```
+
+On a cold start the app launches dsh as a child process and loads the UI in the
+`WKWebView` once the server answers; the web UI is also reachable in a browser
+at `http://127.0.0.1:3080`.
 
 ## Release Build
 
@@ -63,9 +81,11 @@ Options:
 | `--notarize` | Notarize after signing |
 | `--clean` | Run `pnpm run clean` first |
 
-**Output:** `native-macos/dist/DeepSeekHarness.app` (~107MB, fully self-contained)
+**Output:** `native-macos/dist/DeepSeekHarness.app` (~1.5GB, measured 2026-08-15; carries the full dsh tree including the pnpm `node_modules` symlink farm)
 
-The script includes a smoke test: launches the built app and verifies HTTP 200 on port 3080.
+The bundle is self-contained for the dsh tree (no source checkout needed), but a
+system **Node.js ≥ 22** is still required at runtime. The script includes a smoke
+test: launches the built app and verifies HTTP 200 on port 3080.
 
 ## Upgrade Workflow
 
@@ -92,8 +112,27 @@ For distribution (no symlink dependency):
 
 ```bash
 ./native-macos/Scripts/build.sh --bundle
-# Produces: native-macos/dist/DeepSeekHarness.app (~500MB, self-contained)
+# Produces: native-macos/dist/DeepSeekHarness.app (same dsh tree as release, ~1.5GB)
 ```
+
+### Bundle Contents & Offline Operation
+
+The release and `--bundle` builds ship the complete dsh runtime inside the `.app`:
+
+- `apps/cli` and `apps/web/dist` — the dsh CLI and web UI
+- `packages/`, `vendor/`, `native/landlock-run` — harness plugins and native helper
+- `node_modules/` — the full pnpm dependency tree, including the `.pnpm` virtual
+  store and the workspace symlink farm under `node_modules/@deepseek-ai`
+
+Symlinks are copied **as symlinks** (`rsync -a`, not `-aL`): every link is
+relative and its target (`.pnpm/`, `packages/`, `vendor/`) is bundled alongside,
+so the whole tree resolves inside the bundle and runs offline. Dereferencing
+(`-aL`) would re-materialize the `.pnpm` store once per link and can recurse
+through peer cycles.
+
+The lightweight debug build (`build.sh` without `--bundle`) carries **no** dsh
+tree: `Contents/Resources/dsh-root` is a symlink to the project root, so it
+depends on the source checkout. Node.js ≥ 22 is a runtime requirement in all modes.
 
 ## Script Options
 
@@ -102,7 +141,7 @@ For distribution (no symlink dependency):
 | (none) | Debug build, lightweight symlink mode |
 | `release` | Release build (`-O`), `DeepSeekHarness.app` |
 | `--skip-dsh` | Skip `pnpm run build` (dsh already up-to-date) |
-| `--bundle` | Full bundle mode (copies dsh into .app, ~500MB) |
+| `--bundle` | Full bundle mode (copies dsh tree incl. node_modules symlink farm into .app, ~1.5GB) |
 | `--clean` | Run `pnpm run clean` before building |
 
 ## Native Bridge API

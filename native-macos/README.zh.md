@@ -9,8 +9,9 @@
 ```
 DeepSeekHarness.app/
 ├── Contents/MacOS/DeepSeekHarness          # 编译后的 Swift 二进制
-├── Contents/Resources/dsh-root/            # 符号链接 → 项目根目录（开发模式）
-│                                              或 dsh 文件副本（发布模式）
+├── Contents/Resources/dsh-root/            # 符号链接 → 项目根目录（debug）
+│                                              或完整 dsh 目录树（含 pnpm
+│                                              node_modules 符号链接农场，release）
 └── Contents/Info.plist
 ```
 
@@ -27,6 +28,17 @@ DeepSeekHarness.app/
 3. 可执行文件向上三级（swiftc 开发构建）
 4. 默认回退：`/Users/dennis/AIProjects/deepseek-harness`
 
+## 持久化状态（`~/.dsh`）
+
+用户数据持久化在 `~/.dsh`：`DshServer` 在启动 dsh 前创建该目录，显式设置的
+`DSH_HOME` 环境变量优先于默认值（优先级与 `dsh-home-paths` 一致）：
+
+- `profiles/` — `web` profile，首次启动时创建，之后复用
+- `sessions/` — 会话日志，跨应用重启保留
+- `storages/` — 设置、凭证引用与匿名身份
+
+profiles 与会话**不再**写入每次启动的临时目录 `/tmp/dsh-<pid>`：它们跨重启持久保留。
+
 ## 快速开始
 
 ```bash
@@ -39,6 +51,37 @@ pnpm run build
 # 3. 运行
 open native-macos/dist/DeepSeekHarness-debug.app
 ```
+
+冷启动后，应用将 dsh 作为子进程拉起，服务就绪后由 `WKWebView` 加载 UI；
+Web UI 也可在浏览器中通过 `http://127.0.0.1:3080` 访问。
+
+## 发布构建（Release Build）
+
+生成自包含可分发 `.app`（无符号链接依赖）：
+
+```bash
+./native-macos/Scripts/release.sh           # 完整构建（dsh + Swift）
+./native-macos/Scripts/release.sh --skip-dsh   # 跳过 pnpm build
+./native-macos/Scripts/release.sh --dmg      # 同时生成 .dmg 安装包
+./native-macos/Scripts/release.sh --sign "Developer ID"  # 代码签名
+```
+
+选项：
+
+| 参数 | 说明 |
+|------|------|
+| `--skip-dsh` | 跳过 `pnpm run build`（dsh 已最新） |
+| `--strip` | 去除二进制调试符号 |
+| `--dmg` | 生成 `.dmg` 磁盘镜像安装包 |
+| `--sign <id>` | 使用指定身份签名 |
+| `--notarize` | 签名后公证 |
+| `--clean` | 先运行 `pnpm run clean` |
+
+**产出：** `native-macos/dist/DeepSeekHarness.app`（约 1.5GB，2026-08-15 实测；
+包含完整 dsh 目录树，含 pnpm `node_modules` 符号链接农场）
+
+bundle 相对 dsh 目录树是自包含的（无需源码检出），但运行时仍需系统
+**Node.js ≥ 22**。脚本自带 smoke test：启动应用并校验 3080 端口 HTTP 200。
 
 ## 升级流程
 
@@ -65,8 +108,26 @@ git pull && pnpm run build && ./native-macos/Scripts/build.sh --skip-dsh
 
 ```bash
 ./native-macos/Scripts/build.sh --bundle
-# 产出：native-macos/dist/DeepSeekHarness.app（约 500MB，自包含）
+# 产出：native-macos/dist/DeepSeekHarness.app（与 release 相同的 dsh 目录树，约 1.5GB）
 ```
+
+### Bundle 内容与离线运行
+
+release 与 `--bundle` 构建会将完整 dsh 运行时内嵌到 `.app`：
+
+- `apps/cli` 与 `apps/web/dist` — dsh CLI 与 Web UI
+- `packages/`、`vendor/`、`native/landlock-run` — harness 插件与原生助手
+- `node_modules/` — 完整 pnpm 依赖树，含 `.pnpm` 虚拟商店与
+  `node_modules/@deepseek-ai` 下的 workspace 符号链接农场
+
+符号链接以**链接形式**复制（`rsync -a`，而非 `-aL`）：每条链接都是相对路径，
+其目标（`.pnpm/`、`packages/`、`vendor/`）已一并打包，因此整个目录树在 bundle
+内可解析并可离线运行。若反序列化链接（`-aL`），`.pnpm` 商店会按链接逐份复制，
+并可能因 peer 环递归失控。
+
+轻量 debug 构建（`build.sh` 不加 `--bundle`）**不携带** dsh 目录树：
+`Contents/Resources/dsh-root` 是指向项目根目录的符号链接，依赖源码检出。
+所有模式下运行时都要求 Node.js ≥ 22。
 
 ## 脚本选项
 
@@ -75,7 +136,7 @@ git pull && pnpm run build && ./native-macos/Scripts/build.sh --skip-dsh
 | （无） | Debug 构建，轻量符号链接模式 |
 | `release` | Release 构建（`-O`），生成 `DeepSeekHarness.app` |
 | `--skip-dsh` | 跳过 `pnpm run build`（dsh 已最新） |
-| `--bundle` | 完整打包模式（将 dsh 内嵌到 .app，约 500MB） |
+| `--bundle` | 完整打包模式（将 dsh 目录树连同 node_modules 符号链接农场内嵌到 .app，约 1.5GB） |
 | `--clean` | 构建前运行 `pnpm run clean` |
 
 ## 原生 Bridge API
