@@ -25,8 +25,8 @@ DeepSeekHarness.app/
 
 1. `DSH_PROJECT_ROOT` 环境变量
 2. `.app` 包内的 `Contents/Resources/dsh-root/`（完整打包模式）
-3. 可执行文件向上三级（swiftc 开发构建）
-4. 默认回退：`/Users/dennis/AIProjects/deepseek-harness`
+3. 从可执行文件所在目录逐级向上探测 `apps/cli/lib/bin.js`（swiftc 开发构建）
+4. 均未命中则报错退出（可读错误），可设 `DSH_PROJECT_ROOT` 显式指定项目根目录
 
 ## 持久化状态（`~/.dsh`）
 

@@ -26,8 +26,8 @@ DeepSeekHarness.app/
 The app finds the dsh project in this order:
 1. `DSH_PROJECT_ROOT` environment variable
 2. `Contents/Resources/dsh-root/` inside the `.app` bundle (full-bundle mode)
-3. Three levels up from the running binary (swiftc dev build)
-4. Fallback: `/Users/dennis/AIProjects/deepseek-harness`
+3. Walking up from the running binary until `apps/cli/lib/bin.js` is found (swiftc dev build)
+4. Otherwise it fails with a readable error; set `DSH_PROJECT_ROOT` to point at the repository
 
 ## Persistent State (`~/.dsh`)
 
