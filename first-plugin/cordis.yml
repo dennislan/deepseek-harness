@@ -1,0 +1,3 @@
+- insert:
+  - id: first
+  - name: '~/AIProjects/deepseek-harness/first-plugin/src/first-plugin.ts'

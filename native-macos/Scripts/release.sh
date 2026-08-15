@@ -223,6 +223,21 @@ info "  config files"
 DSH_ROOT_SIZE=$(du -sh "$DSH_ROOT" | cut -f1)
 info "dsh-root total: $DSH_ROOT_SIZE"
 
+# Compile asset catalog: AppIcon.icns + Assets.car (LogoLight/LogoDark for splash)
+ICON_FILE=""
+ASSETS_CATALOG="$SRC/native-macos/App/Assets.xcassets"
+if [ -d "$ASSETS_CATALOG" ]; then
+    xcrun actool "$ASSETS_CATALOG" \
+        --platform macosx \
+        --minimum-deployment-target 14.0 \
+        --app-icon AppIcon \
+        --compile "$APP_DIR/Contents/Resources" \
+        --output-partial-info-plist "$TMP_DIR/actool.plist" \
+        || fail "Asset catalog compilation failed"
+    ICON_FILE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$TMP_DIR/actool.plist" 2>/dev/null || true)"
+    [ -n "$ICON_FILE" ] && info "App icon: $ICON_FILE.icns + Assets.car"
+fi
+
 # Write Info.plist
 cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -256,6 +271,11 @@ cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
 </dict>
 </plist>
 PLIST
+
+# Attach the icon name produced by actool (quoted heredoc does not expand vars)
+if [ -n "$ICON_FILE" ]; then
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string $ICON_FILE" "$APP_DIR/Contents/Info.plist"
+fi
 
 # =============================================================================
 # Step 4: Verification

@@ -10,7 +10,6 @@
 		0CCAA558355696D2C99E9DB3 /* DeepSeekHarnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472562E84736911591445FE6 /* DeepSeekHarnessApp.swift */; };
 		4C080F89573199F6A4E88C24 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8CC34F801B476AE0F886958 /* ContentView.swift */; };
 		7718FCD09AEFBE77DEEC8639 /* DshServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52F07381B49498A4ED9F47FA /* DshServer.swift */; };
-		7DB39306DA1081E1757B50EB /* DeepSeekHarness.xcodeproj in Resources */ = {isa = PBXBuildFile; fileRef = E8082C757D6BC5CF675C4357 /* DeepSeekHarness.xcodeproj */; };
 		B0F7F21DCE85F1494A8208FC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DA7BF6F43FE27E7BD3F94632 /* Assets.xcassets */; };
 		C67A6FB231D4DCF866E5E337 /* BridgeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE9C7BEB570F5CF0D7B1441B /* BridgeManager.swift */; };
 /* End PBXBuildFile section */
@@ -21,7 +20,6 @@
 		52F07381B49498A4ED9F47FA /* DshServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DshServer.swift; sourceTree = "<group>"; };
 		D8CC34F801B476AE0F886958 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		DA7BF6F43FE27E7BD3F94632 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		E8082C757D6BC5CF675C4357 /* DeepSeekHarness.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = DeepSeekHarness.xcodeproj; sourceTree = "<group>"; };
 		FE9C7BEB570F5CF0D7B1441B /* BridgeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -46,7 +44,6 @@
 			isa = PBXGroup;
 			children = (
 				DA7BF6F43FE27E7BD3F94632 /* Assets.xcassets */,
-				E8082C757D6BC5CF675C4357 /* DeepSeekHarness.xcodeproj */,
 				E9478D2F1DAEA91A5913A07B /* App */,
 				D769649675F25B27BCC8C5DE /* NativeBridge */,
 				25D9CC7BBAD612BC748CDCDA /* Server */,
@@ -108,8 +105,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = 217FC1FBFACD779F4907CB1D /* Build configuration list for PBXProject "DeepSeekHarness" */;
 			developmentRegion = en;
@@ -136,7 +131,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				B0F7F21DCE85F1494A8208FC /* Assets.xcassets in Resources */,
-				7DB39306DA1081E1757B50EB /* DeepSeekHarness.xcodeproj in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

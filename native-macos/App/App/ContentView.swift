@@ -4,6 +4,7 @@ import WebKit
 struct ContentView: View {
     let server: DshServer
     let bridge: BridgeManager
+    @Environment(\.colorScheme) private var colorScheme
     @State private var displayURL: URL?
     @State private var isReady = false
     @State private var statusObserver: NSObjectProtocol?
@@ -16,9 +17,11 @@ struct ContentView: View {
                     .ignoresSafeArea()
             } else {
                 VStack(spacing: 16) {
-                    Image(systemName: "brain")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.blue)
+                    // 深色模式显示浅色 logo（LogoLight），浅色模式显示深色 logo（LogoDark）
+                    Image(colorScheme == .dark ? "LogoLight" : "LogoDark")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 128, height: 128)
                     Text("DeepSeek Harness")
                         .font(.title2)
                         .fontWeight(.semibold)
@@ -31,6 +34,12 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .overlay(alignment: .top) {
+            // hiddenTitleBar 窗口没有标题栏拖拽区；此透明条让窗口可通过
+            // 顶部 ~28pt 区域拖动（标准标题栏高度）。
+            WindowDragRegion()
+                .frame(height: 28)
         }
         .onAppear {
             // Listen for status changes
@@ -75,6 +84,24 @@ struct ContentView: View {
             urlObserver = nil
         }
     }
+}
+
+/// hiddenTitleBar 窗口无标题栏拖拽区；此透明视图让窗口可通过顶部区域拖动。
+/// mouseDownCanMoveWindow 需要窗口 isMovableByWindowBackground = true 才生效，
+/// 因此 viewDidMoveToWindow 中一并设置。
+private final class WindowDragRegionView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.isMovableByWindowBackground = true
+    }
+}
+
+private struct WindowDragRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { WindowDragRegionView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 struct WebViewContainer: NSViewRepresentable {

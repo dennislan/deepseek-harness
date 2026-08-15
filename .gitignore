@@ -41,3 +41,4 @@ worktrees/
 
 # macOS app build output
 native-macos/dist/
+.omo/
