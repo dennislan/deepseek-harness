@@ -16,9 +16,9 @@ DeepSeekHarness.app/
 ```
 
 **运行流程：**
-1. 应用启动 → `DshServer` 以子进程方式运行 `dsh --profile web --port 3080`
+1. 应用启动 → `DshServer` 以子进程方式运行 `dsh --profile web --port 6080`
 2. 轮询 HTTP `/` 返回 200
-3. `ContentView` 在 `WKWebView` 中加载 `http://127.0.0.1:3080`
+3. `ContentView` 在 `WKWebView` 中加载 `http://127.0.0.1:6080`
 4. JS Bridge (`nativeBridge`) 将 `window.nativeBridge.request()` 映射到 macOS API
 
 ## 项目根目录解析顺序
@@ -53,7 +53,7 @@ open native-macos/dist/DeepSeekHarness-debug.app
 ```
 
 冷启动后，应用将 dsh 作为子进程拉起，服务就绪后由 `WKWebView` 加载 UI；
-Web UI 也可在浏览器中通过 `http://127.0.0.1:3080` 访问。
+Web UI 也可在浏览器中通过 `http://127.0.0.1:6080` 访问。
 
 ## 发布构建（Release Build）
 
@@ -81,7 +81,7 @@ Web UI 也可在浏览器中通过 `http://127.0.0.1:3080` 访问。
 包含完整 dsh 目录树，含 pnpm `node_modules` 符号链接农场）
 
 bundle 相对 dsh 目录树是自包含的（无需源码检出），但运行时仍需系统
-**Node.js ≥ 22**。脚本自带 smoke test：启动应用并校验 3080 端口 HTTP 200。
+**Node.js ≥ 22**。脚本自带 smoke test：启动应用并校验 6080 端口 HTTP 200。
 
 ## 升级流程
 

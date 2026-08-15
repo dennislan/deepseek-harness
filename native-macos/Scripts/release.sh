@@ -440,7 +440,7 @@ info "dsh CLI found at $CLI_BIN"
 
 # Quick smoke test: verify binary runs and starts dsh
 info "Smoke testing…"
-# Kill any dsh already on port 3080
+# Kill any dsh already on port 6080
 pkill -f "dsh.*profile web" 2>/dev/null || true
 
 "$APP_DIR/Contents/MacOS/$BINARY_NAME" &
@@ -450,7 +450,7 @@ trap 'kill $APP_PID 2>/dev/null; rm -rf "$TMP_DIR"' EXIT
 READY=false
 for i in $(seq 1 30); do
     sleep 1
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3080/ 2>/dev/null || echo "000")
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/ 2>/dev/null || echo "000")
     if [ "$HTTP_CODE" = "200" ]; then
         READY=true
         break
@@ -458,7 +458,7 @@ for i in $(seq 1 30); do
 done
 
 if [ "$READY" = true ]; then
-    info "Smoke test passed (HTTP 200 on :3080)"
+    info "Smoke test passed (HTTP 200 on :6080)"
 else
     warn "Smoke test: server did not become ready in 30s (bundle may still work)"
 fi

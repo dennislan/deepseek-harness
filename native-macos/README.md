@@ -16,9 +16,9 @@ DeepSeekHarness.app/
 ```
 
 **Runtime flow:**
-1. App launches → `DshServer` starts `dsh --profile web --port 3080` as a child process
+1. App launches → `DshServer` starts `dsh --profile web --port 6080` as a child process
 2. Waits for HTTP `/` to return 200
-3. `ContentView` loads `http://127.0.0.1:3080` in a `WKWebView`
+3. `ContentView` loads `http://127.0.0.1:6080` in a `WKWebView`
 4. JS bridge (`nativeBridge`) maps `window.nativeBridge.request()` → macOS APIs
 
 ## Project Root Resolution
@@ -57,7 +57,7 @@ open native-macos/dist/DeepSeekHarness-debug.app
 
 On a cold start the app launches dsh as a child process and loads the UI in the
 `WKWebView` once the server answers; the web UI is also reachable in a browser
-at `http://127.0.0.1:3080`.
+at `http://127.0.0.1:6080`.
 
 ## Release Build
 
@@ -85,7 +85,7 @@ Options:
 
 The bundle is self-contained for the dsh tree (no source checkout needed), but a
 system **Node.js ≥ 22** is still required at runtime. The script includes a smoke
-test: launches the built app and verifies HTTP 200 on port 3080.
+test: launches the built app and verifies HTTP 200 on port 6080.
 
 ## Upgrade Workflow
 
