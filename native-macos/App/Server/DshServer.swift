@@ -196,19 +196,23 @@ actor DshServer {
             logger.info("using bundled dsh-root: \(bundleURL.path)")
             return bundleURL
         }
-        // Dev build: 3 levels up from executable
+        // Dev build: walk up from the executable until the dsh CLI is found
         let exeURL = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
-        let devRoot = exeURL.deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("deepseek-harness")
-        if FileManager.default.fileExists(atPath: devRoot.appendingPathComponent("apps/cli/lib").path) {
-            logger.info("using dev project root: \(devRoot.path)")
-            return devRoot
+        var dir = exeURL.deletingLastPathComponent()
+        while true {
+            let marker = dir.appendingPathComponent("apps/cli/lib/bin.js")
+            if FileManager.default.fileExists(atPath: marker.path) {
+                logger.info("using dev project root: \(dir.path)")
+                return dir
+            }
+            let parent = dir.deletingLastPathComponent()
+            if parent == dir { break }
+            dir = parent
         }
-        let fallback = URL(fileURLWithPath: "/Users/dennis/AIProjects/deepseek-harness")
-        logger.warning("using fallback project root: \(fallback.path)")
-        return fallback
+        fatalError(
+            "无法定位 dsh 项目根目录：从可执行文件所在目录向上逐级探测 apps/cli/lib/bin.js " +
+            "直至文件系统根目录均未命中。请设置 DSH_PROJECT_ROOT 环境变量，或确保二进制位于 deepseek-harness 仓库内。"
+        )
     }
 }
 
