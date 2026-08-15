@@ -9,7 +9,7 @@
 #   ./native-macos/Scripts/release.sh --skip-dsh     skip pnpm build
 #   ./native-macos/Scripts/release.sh --strip        strip debug symbols
 #   ./native-macos/Scripts/release.sh --dmg          also create .dmg installer
-#   ./native-macos/Scripts/release.sh --sign <id>    codesign with identity
+#   ./native-macos/Scripts/release.sh --sign <id>    codesign with identity (default: ad-hoc)
 #   ./native-macos/Scripts/release.sh --notarize     notarize after signing
 #   ./native-macos/Scripts/release.sh --clean        pnpm run clean first
 #
@@ -39,15 +39,28 @@ CODE_SIGN_ID=""
 NOTARIZE=false
 CLEAN_FIRST=false
 
-for arg in "$@"; do
-    case "$arg" in
-        --skip-dsh)   SKIP_DSH=true ;;
-        --strip)      STRIP=true ;;
-        --dmg)        CREATE_DMG=true ;;
-        --sign)       CODE_SIGN_ID="${2:-}"; shift ;;
-        --notarize)   NOTARIZE=true ;;
-        --clean)      CLEAN_FIRST=true ;;
-        *) echo "Unknown flag: $arg" >&2; exit 1 ;;
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-dsh)   SKIP_DSH=true; shift ;;
+        --strip)      STRIP=true; shift ;;
+        --dmg)        CREATE_DMG=true; shift ;;
+        --sign)
+            shift
+            if [ $# -eq 0 ] || [ -z "$1" ]; then
+                echo "Error: --sign requires an identity (e.g. --sign \"Developer ID Application: X\")" >&2
+                exit 1
+            fi
+            CODE_SIGN_ID="$1"; shift ;;
+        --sign=*)
+            CODE_SIGN_ID="${1#--sign=}"
+            if [ -z "$CODE_SIGN_ID" ]; then
+                echo "Error: --sign requires an identity (e.g. --sign=\"Developer ID Application: X\")" >&2
+                exit 1
+            fi
+            shift ;;
+        --notarize)   NOTARIZE=true; shift ;;
+        --clean)      CLEAN_FIRST=true; shift ;;
+        *) echo "Unknown flag: $1" >&2; exit 1 ;;
     esac
 done
 
@@ -283,12 +296,17 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 # Step 5: Code sign (optional)
 # =============================================================================
 if [ -n "$CODE_SIGN_ID" ]; then
-    step "Codesigning..."
+    step "Codesigning (identity: $CODE_SIGN_ID)..."
     codesign --sign "$CODE_SIGN_ID" --force --deep --options runtime "$APP_DIR" \
         || warn "Codesigning failed (may need entitlements)"
     info "Codesigned"
 elif [ "$NOTARIZE" = true ]; then
     warn "Notarize requested but --sign not provided; skipping"
+else
+    step "Codesigning (ad-hoc)..."
+    codesign --force --deep -s - "$APP_DIR" \
+        || warn "Ad-hoc codesigning failed"
+    info "Ad-hoc codesigned"
 fi
 
 # =============================================================================
