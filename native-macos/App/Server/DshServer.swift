@@ -11,7 +11,7 @@ actor DshServer {
 
     private var process: Process?
     private let projectRoot: URL
-    private let defaultPort: Int = 3080
+    private let defaultPort: Int = 6080
 
     var status: Status = .stopped
     var url: URL?
