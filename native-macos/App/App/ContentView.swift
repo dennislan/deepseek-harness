@@ -35,11 +35,12 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background(MovableWindowRepresentable())
         .overlay(alignment: .top) {
-            // hiddenTitleBar 窗口没有标题栏拖拽区；此透明条让窗口可通过
-            // 顶部 ~28pt 区域拖动（标准标题栏高度）。
-            WindowDragRegion()
+            Color.clear
                 .frame(height: 28)
+                .contentShape(Rectangle())
+                .onTapGesture {}
         }
         .onAppear {
             // Listen for status changes
@@ -86,10 +87,12 @@ struct ContentView: View {
     }
 }
 
-/// hiddenTitleBar 窗口无标题栏拖拽区；此透明视图让窗口可通过顶部区域拖动。
-/// mouseDownCanMoveWindow 需要窗口 isMovableByWindowBackground = true 才生效，
-/// 因此 viewDidMoveToWindow 中一并设置。
-private final class WindowDragRegionView: NSView {
+/// hiddenTitleBar 窗口无系统拖拽区；此透明视图设置
+/// isMovableByWindowBackground = true 使整个窗口背景可拖动，
+/// 并通过 mouseDownCanMoveWindow 让自身参与拖拽。
+/// WKWebView 会吞掉 mouseDown，但窗口级别的 isMovableByWindowBackground
+/// 仍让标题栏区域（顶部 28pt 覆盖层）和其他非 WebView 区域可拖动。
+private final class MovableWindowView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
 
     override func viewDidMoveToWindow() {
@@ -98,9 +101,8 @@ private final class WindowDragRegionView: NSView {
     }
 }
 
-private struct WindowDragRegion: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { WindowDragRegionView() }
-
+private struct MovableWindowRepresentable: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { MovableWindowView() }
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
@@ -115,7 +117,7 @@ struct WebViewContainer: NSViewRepresentable {
         prefs.allowsContentJavaScript = true
         config.defaultWebpagePreferences = prefs
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = MovableWKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         bridge.webView = webView
 
@@ -180,5 +182,14 @@ struct WebViewContainer: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
             NSLog("[DSH] Page loaded: \(webView.url?.absoluteString ?? "?")")
         }
+    }
+}
+
+private final class MovableWKWebView: WKWebView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.isMovableByWindowBackground = true
     }
 }

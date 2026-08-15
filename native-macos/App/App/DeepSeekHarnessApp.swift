@@ -18,7 +18,7 @@ struct DeepSeekHarnessApp: App {
                 .frame(minWidth: 960, minHeight: 640)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unified)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .appInfo) {
