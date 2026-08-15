@@ -76,7 +76,7 @@ actor DshServer {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: nodePath)
-        process.arguments = ["--profile", "web", "--port", "\(port)"]
+        process.arguments = [binPath.path, "--profile", "web", "--port", "\(port)"]
         process.environment = ProcessInfo.processInfo.environment
 
         // Use a writable DSH_HOME
