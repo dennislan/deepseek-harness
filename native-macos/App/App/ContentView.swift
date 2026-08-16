@@ -12,34 +12,17 @@ struct ContentView: View {
     @State private var urlObserver: NSObjectProtocol?
 
     var body: some View {
-        ZStack {
-            if isReady, let url = displayURL {
-                WebViewContainer(url: url, bridge: bridge)
-                    .ignoresSafeArea()
-            } else {
-                VStack(spacing: 16) {
-                    // 深色模式显示浅色 logo（LogoLight），浅色模式显示深色 logo（LogoDark）
-                    Image(colorScheme == .dark ? "LogoLight" : "LogoDark")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 128, height: 128)
-                    Text("DeepSeek Harness")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text(statusText)
+        VStack(spacing: 0) {
+            // 标题栏独立占位:不与 WebView 重叠,网页内容不会被遮挡
+            TitleBar()
+                .frame(height: titleBarHeight)
+                .overlay(alignment: .trailing) {
+                    Text("Power by DeepSeek")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal)
+                        .padding(.trailing, 8)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .background(BackgroundRepresentable())
-        .overlay(alignment: .top) {
-            TitleBarRepresentable()
-                .frame(height: 28)
+            content
         }
         .onAppear {
             // Listen for status changes
@@ -85,28 +68,78 @@ struct ContentView: View {
             urlObserver = nil
         }
     }
+
+    /// 内容区:服务就绪后显示 WebView,否则显示加载状态。
+    @ViewBuilder
+    private var content: some View {
+        if isReady, let url = displayURL {
+            WebViewContainer(url: url, bridge: bridge)
+        } else {
+            VStack(spacing: 16) {
+                // 深色模式显示浅色 logo（LogoLight），浅色模式显示深色 logo（LogoDark）
+                Image(colorScheme == .dark ? "LogoLight" : "LogoDark")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 128, height: 128)
+                // Text("DeepSeek Harness")
+                //     .font(.title2)
+                //     .fontWeight(.semibold)
+                ProgressView()
+                    .scaleEffect(0.8)
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
 }
 
-/// 背景层：保持默认 mouseDownCanMoveWindow = false，
-/// 窗口背景区域不可拖动，仅标题栏视图可拖动。
-private final class BackgroundView: NSView {}
+/// 标题栏高度(pt):frame 修饰符、`intrinsicContentSize` 与 `updateNSView`
+/// 三处共用,改高度只动这一处。高度需容纳右上角 "Power by DeepSeek" 文字。
+private let titleBarHeight: CGFloat = 28
 
-private struct BackgroundRepresentable: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { BackgroundView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-/// 标准高度标题栏视图：仅该区域允许拖动窗口。
-/// hiddenTitleBar 窗口无系统拖拽区，重写 mouseDownCanMoveWindow = true
-/// 使此独立 NSView 独占拖拽能力；位于 WebView 之上的 overlay，
-/// 不被 WKWebView 吞掉 mouseDown。
-private final class TitleBarView: NSView {
-    override var mouseDownCanMoveWindow: Bool { true }
-}
-
-private struct TitleBarRepresentable: NSViewRepresentable {
+private struct TitleBar: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { TitleBarView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // 强制固定高度:SwiftUI 的 frame 修饰符对 NSViewRepresentable 的
+        // 约束在部分 macOS 版本上不可靠,直接设置 NSView frame 兜底。
+        nsView.frame.size.height = titleBarHeight
+    }
+}
+
+private final class TitleBarView: NSView {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: titleBarHeight)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.isMovableByWindowBackground = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            window?.performZoom(nil)
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        self
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        // 底部 1pt 分隔线,提示拖动区域边界
+        NSColor.separatorColor.setFill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+    }
 }
 
 struct WebViewContainer: NSViewRepresentable {
