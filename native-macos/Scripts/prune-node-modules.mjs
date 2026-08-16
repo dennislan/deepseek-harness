@@ -245,22 +245,17 @@ for (const pkgDir of packages) {
     };
     walkDel(pkgDir);
 
-    // rule 4: if both .mjs and .cjs exist for the same base and the package did
-    // not reference either via exports/main/bin, the one NOT matching the
-    // resolved "type" is redundant. Conservative: only delete when exactly one
-    // is referenced anywhere; otherwise leave both.
-    for (const [, exts] of tsByBase) {
-        if (exts.has('.mjs') && exts.has('.cjs')) {
-            // Both present; neither is in `keep` (else we would have skipped).
-            // Delete the copy whose extension contradicts package "type".
-            let type = 'commonjs';
-            try { type = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')).type || 'commonjs'; }
-            catch { /* default commonjs */ }
-            // type=module → .cjs is the odd one; type=commonjs → .mjs is odd.
-            const redundant = type === 'module' ? '.cjs' : '.mjs';
-            const target = join(pkgDir, baseNoExt + redundant);
-            if (existsSync(target)) tryUnlink(target, stats.dual);
-        }
+    // rule 4: if both .mjs and .cjs exist for the same base and exactly one of
+    // them is referenced via exports/main/bin, the unreferenced copy is
+    // redundant. If both or neither are referenced, keep both (conservative).
+    for (const [base, exts] of tsByBase) {
+        if (!(exts.has('.mjs') && exts.has('.cjs'))) continue;
+        const refMjs = keep.has(base + '.mjs');
+        const refCjs = keep.has(base + '.cjs');
+        if (refMjs === refCjs) continue; // both or neither referenced
+        const redundant = refMjs ? '.cjs' : '.mjs';
+        const target = join(pkgDir, base + redundant);
+        if (existsSync(target)) tryUnlink(target, stats.dual);
     }
 }
 

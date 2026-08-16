@@ -33,7 +33,7 @@
 #   --no-prune           保留 dev 依赖与构建产物（默认剪枝）
 #   -h | --help          显示帮助
 #
-# 内嵌 Node：默认下载 Node v22 arm64 到 Contents/Resources/node，使干净 macOS
+# 内嵌 Node：默认下载 Node v24 arm64 到 Contents/Resources/node，使干净 macOS
 #   无需系统 Node 即可运行；DSH_NODE_PATH 与系统 node 仍作为 fallback。
 #   可用环境变量 NODE_VERSION 覆盖版本（须满足引擎约束 ^22.19 || >=24）。
 #   如本机已安装 Node，可用 --node-from <path> 或 NODE_LOCAL_PATH 直接复制，跳过下载。
@@ -73,9 +73,12 @@ SDK_PATH="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null \
     || echo "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk")"
 
 # 内嵌 Node.js 运行时（固定版本，可被 NODE_VERSION 覆盖）
-NODE_VERSION="${NODE_VERSION:-v22.20.0}"
+NODE_VERSION="${NODE_VERSION:-v24.12.0}"
 # 本地已安装的 Node 目录（含 bin/node）；设置后优先复制，跳过下载。
-NODE_LOCAL_PATH="${NODE_LOCAL_PATH:-～/.nvm/versions/node/v24.12.0}"
+# 使用 $HOME 而非 ~，避免全角 ～（U+FF5E）被误写时无法展开。
+if [ -z "${NODE_LOCAL_PATH:-}" ] || [ "$NODE_LOCAL_PATH" = "～/.nvm/versions/node/v24.12.0" ]; then
+    NODE_LOCAL_PATH="$HOME/.nvm/versions/node/v24.12.0"
+fi
 NODE_DIST_BASE="https://nodejs.org/dist"
 NODE_TARBALL="node-${NODE_VERSION}-darwin-arm64.tar.gz"
 NODE_URL="${NODE_DIST_BASE}/${NODE_VERSION}/${NODE_TARBALL}"
