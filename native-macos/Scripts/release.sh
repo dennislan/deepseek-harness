@@ -411,7 +411,25 @@ if [ ! -d "$NPM_CLOSURE_DIR/node_modules" ]; then
 fi
 rsync -a "$NPM_CLOSURE_DIR/node_modules/" "$DSH_ROOT/node_modules/" \
     || fail "Failed to copy npm closure node_modules"
-info "  node_modules ($(du -sh "$DSH_ROOT/node_modules" | cut -f1))"
+info "  node_modules before prune ($(du -sh "$DSH_ROOT/node_modules" | cut -f1))"
+
+# Prune non-runtime files from the assembled closure. The globs below never
+# match runtime files (.js/.mjs/.cjs/.json/.yml) or cordis.patch.yml (bundle
+# resolution); package.json exports targets are .js/.mjs/.cjs/.json paths, and
+# *.d.ts targets sit only in the compile-time "types" condition — pruning the
+# copied node_modules (never the closure itself) cannot break module resolution.
+node_modules_before_prune=$(du -sh "$DSH_ROOT/node_modules" | cut -f1)
+find "$DSH_ROOT/node_modules" \
+    \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \
+       -o -name '*.tsbuildinfo' -o -name 'README*' -o -name 'CHANGELOG*' \) \
+    -type f -delete 2>/dev/null || true
+find "$DSH_ROOT/node_modules" -type d \
+    \( -name test -o -name tests -o -name __tests__ \
+       -o -name docs -o -name fixtures \) \
+    -prune -exec rm -rf {} + 2>/dev/null || true
+find "$DSH_ROOT/node_modules" -name '.DS_Store' -delete 2>/dev/null || true
+node_modules_after_prune=$(du -sh "$DSH_ROOT/node_modules" | cut -f1)
+info "  node_modules after prune ($node_modules_before_prune -> $node_modules_after_prune)"
 
 # apps/cli -> ../node_modules/@deepseek-ai/dsh: mkdir creates the parent;
 # rm -rf clears a leftover real directory from an earlier from-source run
