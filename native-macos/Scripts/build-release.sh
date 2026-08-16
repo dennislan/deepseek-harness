@@ -25,6 +25,7 @@
 #   --skip-dsh           跳过 dsh 安装/构建，复用已有产物
 #   --src <dir>          from-source 模式：使用外部源码树（默认本地 checkout）
 #   --no-node            跳过内嵌 Node 下载（运行时回退 DSH_NODE_PATH / 系统 node）
+#   --node-from <path>   从本地已安装的 Node 目录复制内嵌 Node，跳过下载
 #   --strip / --no-strip 二进制 strip（默认开启）
 #   --dmg                额外生成 .dmg
 #   --sign <id>          用指定身份 codesign（默认 ad-hoc）
@@ -35,6 +36,7 @@
 # 内嵌 Node：默认下载 Node v22 arm64 到 Contents/Resources/node，使干净 macOS
 #   无需系统 Node 即可运行；DSH_NODE_PATH 与系统 node 仍作为 fallback。
 #   可用环境变量 NODE_VERSION 覆盖版本（须满足引擎约束 ^22.19 || >=24）。
+#   如本机已安装 Node，可用 --node-from <path> 或 NODE_LOCAL_PATH 直接复制，跳过下载。
 #
 # 输出：
 #   native-macos/dist/DeepSeekHarness.app
@@ -72,6 +74,8 @@ SDK_PATH="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null \
 
 # 内嵌 Node.js 运行时（固定版本，可被 NODE_VERSION 覆盖）
 NODE_VERSION="${NODE_VERSION:-v22.20.0}"
+# 本地已安装的 Node 目录（含 bin/node）；设置后优先复制，跳过下载。
+NODE_LOCAL_PATH="${NODE_LOCAL_PATH:-～/.nvm/versions/node/v24.12.0}"
 NODE_DIST_BASE="https://nodejs.org/dist"
 NODE_TARBALL="node-${NODE_VERSION}-darwin-arm64.tar.gz"
 NODE_URL="${NODE_DIST_BASE}/${NODE_VERSION}/${NODE_TARBALL}"
@@ -138,6 +142,8 @@ while [ $# -gt 0 ]; do
         --src)       shift; [ $# -eq 0 ] && fail "--src 需要参数"; SRC="$1"; shift ;;
         --src=*)     SRC="${1#--src=}"; shift ;;
         --no-node)   EMBED_NODE=false; shift ;;
+        --node-from) shift; [ $# -eq 0 ] && fail "--node-from 需要参数"; NODE_LOCAL_PATH="$1"; shift ;;
+        --node-from=*) NODE_LOCAL_PATH="${1#--node-from=}"; shift ;;
         --strip)     STRIP=true; shift ;;
         --no-strip)  STRIP=false; shift ;;
         --dmg)       CREATE_DMG=true; shift ;;
@@ -216,6 +222,19 @@ embed_node_runtime() {
         info "复用已存在的内嵌 Node @ $NODE_DEST ($(du -h "$NODE_DEST" | cut -f1))"
         return
     fi
+
+    # 优先从本地已安装的 Node 目录复制，跳过下载（--node-from / NODE_LOCAL_PATH）
+    if [ -n "${NODE_LOCAL_PATH:-}" ] && [ -x "$NODE_LOCAL_PATH/bin/node" ]; then
+        step "从本地复制内嵌 Node @ $NODE_LOCAL_PATH"
+        mkdir -p "$NODE_DEST/bin"
+        cp "$NODE_LOCAL_PATH/bin/node" "$NODE_DEST/bin/node" \
+            || fail "复制本地 node 失败：$NODE_LOCAL_PATH/bin/node"
+        [ -f "$NODE_LOCAL_PATH/LICENSE" ] && cp "$NODE_LOCAL_PATH/LICENSE" "$NODE_DEST/LICENSE"
+        chmod +x "$NODE_DEST/bin/node"
+        info "内嵌 Node 已复制 ($(du -h "$NODE_DEST" | cut -f1))"
+        return
+    fi
+
     step "下载内嵌 Node $NODE_VERSION (darwin-arm64)..."
     local NODE_DL="$TMP_DIR/$NODE_TARBALL"
     rm -f "$NODE_DL"
