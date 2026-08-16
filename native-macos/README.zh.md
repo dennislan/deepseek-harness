@@ -10,8 +10,7 @@
 DeepSeekHarness.app/
 ├── Contents/MacOS/DeepSeekHarness          # 编译后的 Swift 二进制
 ├── Contents/Resources/dsh-root/            # 符号链接 → 项目根目录（debug）
-│                                              或完整 dsh 目录树（含 pnpm
-│                                              node_modules 符号链接农场，release）
+│                                              或 npm 生产闭包（release）
 └── Contents/Info.plist
 ```
 
@@ -65,28 +64,23 @@ Web UI 也可在浏览器中通过 `http://127.0.0.1:6080` 访问。
 
 ## 发布构建（Release Build）
 
-生成自包含可分发 `.app`（无符号链接依赖）：
+生成自包含可分发 `.app`（无符号链接依赖）。默认路径组装 npm 生产闭包；
+`--from-source` 显式选择旧 pnpm 路径（体积大得多，仅供本地未发布代码调试）：
 
 ```bash
-./native-macos/Scripts/release.sh           # 完整构建（dsh + Swift）
-./native-macos/Scripts/release.sh --skip-dsh   # 跳过 pnpm build
+./native-macos/Scripts/release.sh           # 完整构建（npm 闭包 + Swift）
+./native-macos/Scripts/release.sh --skip-dsh   # 复用现有 npm 闭包
 ./native-macos/Scripts/release.sh --dmg      # 同时生成 .dmg 安装包
 ./native-macos/Scripts/release.sh --sign "Developer ID"  # 代码签名
 ```
 
-选项：
+闭包由 `NPM_DSH_VERSION` 锁定（当前 `0.1.0-rc.6`），持久存放在
+`dist/.dsh-npm-closure/`（相对 `native-macos/`）：`--skip-dsh` 复用它，
+`--clean` 清空并重装。全部参数见下文「脚本选项」。
 
-| 参数 | 说明 |
-|------|------|
-| `--skip-dsh` | 跳过 `pnpm run build`（dsh 已最新） |
-| `--strip` | 去除二进制调试符号 |
-| `--dmg` | 生成 `.dmg` 磁盘镜像安装包 |
-| `--sign <id>` | 使用指定身份签名 |
-| `--notarize` | 签名后公证 |
-| `--clean` | 先运行 `pnpm run clean` |
-
-**产出：** `native-macos/dist/DeepSeekHarness.app`（约 1.5GB，2026-08-15 实测；
-包含完整 dsh 目录树，含 pnpm `node_modules` 符号链接农场）
+**产出：** `native-macos/dist/DeepSeekHarness.app`（230M，2026-08-16 实测；
+npm 生产闭包 + 清理后的 `node_modules`；对比 2026-08-15 实测约 1.5GB，
+缩小 6.67 倍）
 
 bundle 相对 dsh 目录树是自包含的（无需源码检出），但运行时仍需系统
 **Node.js ≥ 22**。脚本自带 smoke test：启动应用并校验 6080 端口 HTTP 200。
@@ -110,42 +104,35 @@ pnpm run build
 git pull && pnpm run build && ./native-macos/Scripts/build.sh --skip-dsh
 ```
 
-### 完整打包模式
-
-用于分发（无符号链接依赖）：
-
-```bash
-./native-macos/Scripts/build.sh --bundle
-# 产出：native-macos/dist/DeepSeekHarness.app（与 release 相同的 dsh 目录树，约 1.5GB）
-```
-
 ### Bundle 内容与离线运行
 
-release 与 `--bundle` 构建会将完整 dsh 运行时内嵌到 `.app`：
+release 构建将完整 dsh 运行时内嵌到 `.app`：
 
-- `apps/cli` 与 `apps/web/dist` — dsh CLI 与 Web UI
-- `packages/`、`vendor/`、`native/landlock-run` — harness 插件与原生助手
-- `node_modules/` — 完整 pnpm 依赖树，含 `.pnpm` 虚拟商店与
-  `node_modules/@deepseek-ai` 下的 workspace 符号链接农场
+- `Contents/Resources/dsh-root/node_modules/` — 扁平 npm 布局（无 `.pnpm`
+  虚拟商店、无符号链接农场），含编译后的 `@deepseek-ai/*` 包，已清理
+  `*.map`、`*.d.ts`、README/CHANGELOG 与测试/文档夹具
+- `apps/cli` — 符号链接到 `../node_modules/@deepseek-ai/dsh`
+- `apps/web/dist` — 符号链接到 `../node_modules/@deepseek-ai/dsh-web-frontend/dist`
 
-符号链接以**链接形式**复制（`rsync -a`，而非 `-aL`）：每条链接都是相对路径，
-其目标（`.pnpm/`、`packages/`、`vendor/`）已一并打包，因此整个目录树在 bundle
-内可解析并可离线运行。若反序列化链接（`-aL`），`.pnpm` 商店会按链接逐份复制，
-并可能因 peer 环递归失控。
-
-轻量 debug 构建（`build.sh` 不加 `--bundle`）**不携带** dsh 目录树：
-`Contents/Resources/dsh-root` 是指向项目根目录的符号链接，依赖源码检出。
-所有模式下运行时都要求 Node.js ≥ 22。
+两个桥接符号链接可通过 `codesign --verify --deep --strict`（2026-08-16 构建
+已验证），并让应用的 bundle 根目录探测在闭包内解析出 `apps/cli/lib/bin.js`
+与前端 dist。整个目录树可离线运行；运行时仅要求系统 **Node.js ≥ 22**。
 
 ## 脚本选项
 
+`./native-macos/Scripts/release.sh` 的参数：
+
 | 参数 | 说明 |
 |------|------|
-| （无） | Debug 构建，轻量符号链接模式 |
-| `release` | Release 构建（`-O`），生成 `DeepSeekHarness.app` |
-| `--skip-dsh` | 跳过 `pnpm run build`（dsh 已最新） |
-| `--bundle` | 完整打包模式（将 dsh 目录树连同 node_modules 符号链接农场内嵌到 .app，约 1.5GB） |
-| `--clean` | 构建前运行 `pnpm run clean` |
+| （无） | 完整 release 构建：npm 生产闭包 + Swift，生成 `DeepSeekHarness.app` |
+| `--skip-dsh` | 跳过 npm install，复用 `dist/.dsh-npm-closure` 现有闭包；闭包缺失时以可读错误失败 |
+| `--clean` | 清空 `dist/.dsh-npm-closure` 并重新安装 |
+| `--no-prune` | npm 模式下忽略（打印警告；生产闭包没有可剥离的 dev 依赖） |
+| `--from-source` | 选择旧 pnpm 路径，从本地源码检出组装（体积大得多，仅供调试未发布代码） |
+| `--strip` | 去除二进制调试符号 |
+| `--dmg` | 生成 `.dmg` 磁盘镜像安装包 |
+| `--sign <id>` | 使用指定身份签名 |
+| `--notarize` | 签名后公证 |
 
 ## 原生 Bridge API
 
@@ -173,4 +160,4 @@ const yes = await nativeBridge.request('confirm', { title: '确认', message: '�
 - macOS 14.0+ (Sonoma)
 - Xcode 16+（提供 `xcrun swiftc`）
 - Node.js 22+（dsh 运行时）
-- pnpm（dsh 构建）
+- pnpm（仅 `--from-source` 构建需要；npm 闭包路径只需 npm）

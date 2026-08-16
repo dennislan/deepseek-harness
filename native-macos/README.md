@@ -10,8 +10,7 @@ No Electron. No WebView wrapper libraries. Just a thin Swift shell that hosts th
 DeepSeekHarness.app/
 ├── Contents/MacOS/DeepSeekHarness          # Compiled Swift binary
 ├── Contents/Resources/dsh-root/            # Symlink → project root (debug)
-│                                              or full dsh tree incl. pnpm
-│                                              node_modules symlink farm (release)
+│                                              or npm production closure (release)
 └── Contents/Info.plist
 ```
 
@@ -71,27 +70,25 @@ at `http://127.0.0.1:6080`.
 
 ## Release Build
 
-For a self-contained distributable `.app` (no symlink dependency):
+For a self-contained distributable `.app` (no symlink dependency). The default
+path assembles a production npm closure; `--from-source` opts into the legacy
+pnpm tree (much larger; for debugging locally unreleased code only):
 
 ```bash
-./native-macos/Scripts/release.sh           # full build (builds dsh + Swift)
-./native-macos/Scripts/release.sh --skip-dsh   # skip pnpm build
+./native-macos/Scripts/release.sh           # full build (npm closure + Swift)
+./native-macos/Scripts/release.sh --skip-dsh   # reuse existing npm closure
 ./native-macos/Scripts/release.sh --dmg      # also create .dmg installer
 ./native-macos/Scripts/release.sh --sign "Developer ID"  # codesign
 ```
 
-Options:
+The closure is pinned by `NPM_DSH_VERSION` (currently `0.1.0-rc.6`) and persists
+at `dist/.dsh-npm-closure/` (relative to `native-macos/`): `--skip-dsh` reuses
+it and `--clean` wipes and reinstalls it. All flags are listed under Script
+Options below.
 
-| Flag | Description |
-|------|-------------|
-| `--skip-dsh` | Skip `pnpm run build` (dsh already up-to-date) |
-| `--strip` | Strip debug symbols from binary |
-| `--dmg` | Create `.dmg` disk image installer |
-| `--sign <id>` | Codesign with identity |
-| `--notarize` | Notarize after signing |
-| `--clean` | Run `pnpm run clean` first |
-
-**Output:** `native-macos/dist/DeepSeekHarness.app` (~1.5GB, measured 2026-08-15; carries the full dsh tree including the pnpm `node_modules` symlink farm)
+**Output:** `native-macos/dist/DeepSeekHarness.app` (230M, measured 2026-08-16;
+npm production closure with pruned `node_modules`; down from ~1.5GB measured
+2026-08-15, 6.67x smaller)
 
 The bundle is self-contained for the dsh tree (no source checkout needed), but a
 system **Node.js ≥ 22** is still required at runtime. The script includes a smoke
@@ -116,43 +113,36 @@ Or in one line (lightweight mode — no file copy):
 git pull && pnpm run build && ./native-macos/Scripts/build.sh --skip-dsh
 ```
 
-### Full Bundle Mode
-
-For distribution (no symlink dependency):
-
-```bash
-./native-macos/Scripts/build.sh --bundle
-# Produces: native-macos/dist/DeepSeekHarness.app (same dsh tree as release, ~1.5GB)
-```
-
 ### Bundle Contents & Offline Operation
 
-The release and `--bundle` builds ship the complete dsh runtime inside the `.app`:
+The release build ships the complete dsh runtime inside the `.app`:
 
-- `apps/cli` and `apps/web/dist` — the dsh CLI and web UI
-- `packages/`, `vendor/`, `native/landlock-run` — harness plugins and native helper
-- `node_modules/` — the full pnpm dependency tree, including the `.pnpm` virtual
-  store and the workspace symlink farm under `node_modules/@deepseek-ai`
+- `Contents/Resources/dsh-root/node_modules/` — flat npm layout (no `.pnpm`
+  store, no symlink farm) with the compiled `@deepseek-ai/*` packages, pruned
+  of `*.map`, `*.d.ts`, README/CHANGELOG, and test/docs fixtures
+- `apps/cli` — symlink to `../node_modules/@deepseek-ai/dsh`
+- `apps/web/dist` — symlink to `../node_modules/@deepseek-ai/dsh-web-frontend/dist`
 
-Symlinks are copied **as symlinks** (`rsync -a`, not `-aL`): every link is
-relative and its target (`.pnpm/`, `packages/`, `vendor/`) is bundled alongside,
-so the whole tree resolves inside the bundle and runs offline. Dereferencing
-(`-aL`) would re-materialize the `.pnpm` store once per link and can recurse
-through peer cycles.
-
-The lightweight debug build (`build.sh` without `--bundle`) carries **no** dsh
-tree: `Contents/Resources/dsh-root` is a symlink to the project root, so it
-depends on the source checkout. Node.js ≥ 22 is a runtime requirement in all modes.
+The bridge symlinks survive `codesign --verify --deep --strict` (verified on the
+2026-08-16 build) and let the app's bundle-root probe resolve `apps/cli/lib/bin.js`
+and the frontend dist inside the closure. Everything runs offline; only a system
+**Node.js ≥ 22** is required at runtime.
 
 ## Script Options
 
+Flags for `./native-macos/Scripts/release.sh`:
+
 | Flag | Description |
 |------|-------------|
-| (none) | Debug build, lightweight symlink mode |
-| `release` | Release build (`-O`), `DeepSeekHarness.app` |
-| `--skip-dsh` | Skip `pnpm run build` (dsh already up-to-date) |
-| `--bundle` | Full bundle mode (copies dsh tree incl. node_modules symlink farm into .app, ~1.5GB) |
-| `--clean` | Run `pnpm run clean` before building |
+| (none) | Full release build: npm production closure + Swift, `DeepSeekHarness.app` |
+| `--skip-dsh` | Skip npm install and reuse the existing closure at `dist/.dsh-npm-closure`; fails with a readable error if the closure is missing |
+| `--clean` | Wipe `dist/.dsh-npm-closure` and reinstall |
+| `--no-prune` | Ignored in npm mode (prints a warning; the production closure has no dev dependencies to strip) |
+| `--from-source` | Opt into the legacy pnpm path, assembling from the local source checkout (much larger; for debugging unreleased code only) |
+| `--strip` | Strip debug symbols from binary |
+| `--dmg` | Create `.dmg` disk image installer |
+| `--sign <id>` | Codesign with identity |
+| `--notarize` | Notarize after signing |
 
 ## Native Bridge API
 
@@ -180,7 +170,7 @@ const yes = await nativeBridge.request('confirm', { title: 'Confirm', message: '
 - macOS 14.0+ (Sonoma)
 - Xcode 16+ (for `xcrun swiftc`)
 - Node.js 22+ (for dsh runtime)
-- pnpm (for dsh build)
+- pnpm (only for `--from-source` builds; the npm closure path needs only npm)
 
 ## Development Notes
 
