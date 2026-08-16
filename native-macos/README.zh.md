@@ -21,6 +21,12 @@ DeepSeekHarness.app/
 3. `ContentView` 在 `WKWebView` 中加载 `http://127.0.0.1:6080`
 4. JS Bridge (`nativeBridge`) 将 `window.nativeBridge.request()` 映射到 macOS API
 
+启动 dsh 前，应用会先终止仍占用所选端口的残留 dsh 进程。强制退出或崩溃可能
+让上一次运行的 dsh 子进程成为孤儿；若不回收，新启动的 dsh 会以 `EADDRINUSE`
+失败，应用只显示「dsh 进程意外退出 (code=1)」。端口被其他程序占用时会给出
+可操作的明确提示而不是裸的退出码。正常退出（Cmd+Q / 应用菜单退出）时应用会
+先终止 dsh 子进程，因此孤儿只会在硬杀进程后出现，并由下一次启动自动清理。
+
 ## 项目根目录解析顺序
 
 1. `DSH_PROJECT_ROOT` 环境变量
@@ -36,6 +42,8 @@ DeepSeekHarness.app/
 - `profiles/` — `web` profile，首次启动时创建，之后复用
 - `sessions/` — 会话日志，跨应用重启保留
 - `storages/` — 设置、凭证引用与匿名身份
+- `logs/` — 最近一次 dsh 启动输出（`dsh-<port>.log`）；启动失败时状态栏会
+  显示日志尾部，而不是一个裸的退出码
 
 profiles 与会话**不再**写入每次启动的临时目录 `/tmp/dsh-<pid>`：它们跨重启持久保留。
 

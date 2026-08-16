@@ -21,6 +21,14 @@ DeepSeekHarness.app/
 3. `ContentView` loads `http://127.0.0.1:6080` in a `WKWebView`
 4. JS bridge (`nativeBridge`) maps `window.nativeBridge.request()` → macOS APIs
 
+Before starting dsh, the app terminates any stale dsh still listening on the
+chosen port. A force-quit or crash can orphan the dsh child of an earlier run;
+without this recovery the fresh dsh exits with `EADDRINUSE` and the app reports
+only "dsh 进程意外退出 (code=1)". A foreign process owning the port fails loud
+with an actionable message instead. On normal quit (Cmd+Q / Apple menu Quit)
+the app terminates its dsh child first, so orphans only appear after a hard
+kill and are cleaned up on the next launch.
+
 ## Project Root Resolution
 
 The app finds the dsh project in this order:
@@ -38,6 +46,8 @@ default (same precedence as `dsh-home-paths`):
 - `profiles/` — the `web` profile, created on first launch and reused afterwards
 - `sessions/` — session logs, kept across app restarts
 - `storages/` — settings, credential references, and anonymous identity
+- `logs/` — the latest dsh boot output (`dsh-<port>.log`); a failed start shows
+  the log tail in the app's status instead of a bare exit code
 
 Profiles and sessions are **no longer** written to a per-launch
 `/tmp/dsh-<pid>` directory: they survive app restarts.

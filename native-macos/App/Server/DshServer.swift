@@ -1,5 +1,6 @@
 import Foundation
 import os
+import Darwin
 
 /// Manages the dsh Node.js HTTP server process as a child of the Swift app.
 actor DshServer {
@@ -74,15 +75,14 @@ actor DshServer {
 
         let port = chosenPort()
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: nodePath)
-        process.arguments = [binPath.path, "--profile", "web", "--port", "\(port)"]
-
-        // Persist user data under ~/.dsh; an explicit DSH_HOME wins (matches
-        // dsh-home-paths precedence: configured > $DSH_HOME > ~/.dsh).
-        var env = process.environment ?? [:]
-        let dshHome = env["DSH_HOME"]?.trimmingCharacters(in: .whitespaces) ?? ""
-        if dshHome.isEmpty {
+        // A force-quit or crash can orphan the dsh child of an earlier run,
+        // leaving it listening on the chosen port; a fresh dsh then exits with
+        // EADDRINUSE and the app shows only "code=1". Terminate stale dsh
+        // processes on the port before launching; a foreign owner fails loud
+        // with an actionable message instead of a bare exit code.
+        let envHome = ProcessInfo.processInfo.environment["DSH_HOME"]?.trimmingCharacters(in: .whitespaces) ?? ""
+        let homePath: String
+        if envHome.isEmpty {
             let defaultHome = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".dsh")
             do {
@@ -95,13 +95,42 @@ actor DshServer {
                 postStatusChanged()
                 return
             }
-            env["DSH_HOME"] = defaultHome.path
+            homePath = defaultHome.path
+        } else {
+            homePath = envHome
         }
+        let logURL = Self.prepareLog(homePath: homePath, port: port)
+
+        if let conflict = clearStaleServer(on: port) {
+            Self.appendToLog(logURL, "启动失败: \(conflict)")
+            status = .failed(conflict)
+            postStatusChanged()
+            return
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: nodePath)
+        process.arguments = [binPath.path, "--profile", "web", "--port", "\(port)"]
+
+        // Persist user data under ~/.dsh; an explicit DSH_HOME wins (matches
+        // dsh-home-paths precedence: configured > $DSH_HOME > ~/.dsh).
+        var env = process.environment ?? [:]
+        env["DSH_HOME"] = homePath
         process.environment = env
+        // Capture dsh boot output so a non-zero exit shows the real error in
+        // the app's status instead of a bare code=1.
+        if let logHandle = FileHandle(forWritingAtPath: logURL.path) {
+            process.standardOutput = logHandle
+            process.standardError = logHandle
+        }
 
         do {
             try process.run()
             self.process = process
+            Self.activeTerminator = { [weak process] in
+                guard let process else { return }
+                Self.terminate(process)
+            }
             logger.info("dsh started PID=\(process.processIdentifier) port=\(port)")
 
             for attempt in 1...120 {
@@ -109,7 +138,13 @@ actor DshServer {
 
                 if !process.isRunning {
                     if process.terminationStatus != 0 {
-                        status = .failed("dsh 进程意外退出 (code=\(process.terminationStatus))")
+                        let detail = Self.tail(of: logURL, lines: 15)
+                        status = .failed(
+                            "dsh 进程意外退出 (code=\(process.terminationStatus))" +
+                                (detail.isEmpty ? "" : "\n\(detail)")
+                        )
+                    } else {
+                        status = .failed("dsh 进程已退出 (code=0)")
                     }
                     postStatusChanged()
                     return
@@ -140,14 +175,142 @@ actor DshServer {
     }
 
     func stop() {
-        process?.terminate()
-        process?.waitUntilExit()
+        Self.activeTerminator = nil
+        if let process {
+            Self.terminate(process)
+        }
         process = nil
         url = nil
         status = .stopped
         logger.info("dsh stopped")
         postStatusChanged()
         postURLChanged()
+    }
+
+    // MARK: - Stale process recovery
+
+    /// Terminates stale dsh processes listening on `port` (children of earlier
+    /// app runs). Returns nil when the port is free or owned only by our dsh;
+    /// returns an actionable message when a foreign process owns it.
+    private func clearStaleServer(on port: Int) -> String? {
+        var foreign: [Int] = []
+        for pid in listeningPIDs(on: port) {
+            let command = commandLine(of: pid) ?? ""
+            if isDshCommand(command, port: port) {
+                logger.info("terminating stale dsh (PID \(pid)) on port \(port)")
+                Self.terminate(pid: pid)
+            } else {
+                foreign.append(pid)
+            }
+        }
+        guard let pid = foreign.first else { return nil }
+        return "端口 \(port) 已被其他程序占用 (PID \(pid))，无法启动 dsh。请退出占用该端口的程序，或设置 DSH_PORT 更换端口。"
+    }
+
+    private func isDshCommand(_ command: String, port: Int) -> Bool {
+        let binPath = projectRoot.appendingPathComponent("apps/cli/lib/bin.js").path
+        return command.contains(binPath) || (
+            command.contains("bin.js")
+                && command.contains("--profile")
+                && command.contains("web")
+                && command.contains("--port \(port)")
+        )
+    }
+
+    private func listeningPIDs(on port: Int) -> [Int] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return []
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        return text.split(whereSeparator: \.isNewline).compactMap {
+            Int($0.trimmingCharacters(in: .whitespaces))
+        }
+    }
+
+    private func commandLine(of pid: Int) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-p", "\(pid)", "-o", "command="]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Termination
+
+    private static func terminate(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let deadline = Date().addingTimeInterval(2)
+        while process.isRunning && Date() < deadline {
+            usleep(100_000)
+        }
+        if process.isRunning {
+            kill(pid_t(process.processIdentifier), SIGKILL)
+        }
+        process.waitUntilExit()
+    }
+
+    private static func terminate(pid: Int) {
+        kill(pid_t(pid), SIGTERM)
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            usleep(100_000)
+            if kill(pid_t(pid), 0) != 0 { return }
+        }
+        kill(pid_t(pid), SIGKILL)
+    }
+
+    // MARK: - Boot log
+
+    private static func prepareLog(homePath: String, port: Int) -> URL {
+        let logsDir = URL(fileURLWithPath: homePath)
+            .appendingPathComponent("logs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+        let url = logsDir.appendingPathComponent("dsh-\(port).log")
+        if FileManager.default.createFile(atPath: url.path, contents: nil) {
+            if let handle = FileHandle(forWritingAtPath: url.path) {
+                handle.truncateFile(atOffset: 0)
+                try? handle.close()
+            }
+        }
+        return url
+    }
+
+    private static func appendToLog(_ url: URL, _ message: String) {
+        guard let handle = FileHandle(forWritingAtPath: url.path) else { return }
+        handle.seekToEndOfFile()
+        handle.write(Data((message + "\n").utf8))
+        try? handle.close()
+    }
+
+    private static func tail(of url: URL, lines: Int) -> String {
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return text.split(separator: "\n", omittingEmptySubsequences: false)
+            .suffix(lines)
+            .joined(separator: "\n")
     }
 
     // MARK: - Notifications (called from actor context, safe)
@@ -234,6 +397,12 @@ actor DshServer {
 extension DshServer {
     static let statusChanged = Notification.Name("DeepSeekHarness.DshServer.statusChanged")
     static let urlChanged    = Notification.Name("DeepSeekHarness.DshServer.urlChanged")
+
+    /// Synchronous terminator invoked from `applicationWillTerminate`, so a
+    /// normal quit (Cmd+Q / Apple menu Quit) stops the dsh child before the
+    /// process exits. Cleared on stop; a force-quit still orphans the child,
+    /// which the next launch recovers from via `clearStaleServer`.
+    nonisolated(unsafe) static var activeTerminator: (() -> Void)?
 }
 
 private let logger = os.Logger(subsystem: "com.deepseek.harness", category: "dsh-server")

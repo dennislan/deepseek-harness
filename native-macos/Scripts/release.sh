@@ -440,20 +440,32 @@ info "dsh CLI found at $CLI_BIN"
 
 # Quick smoke test: verify binary runs and starts dsh
 info "Smoke testing…"
-# Kill any dsh already on port 6080
-pkill -f "dsh.*profile web" 2>/dev/null || true
+# Terminate dsh instances from this bundle: a force-quit or crash leaves the
+# child of an earlier run holding :6080, and a fresh dsh then exits with
+# EADDRINUSE (reported by the app as "code=1").
+pkill -f "$DSH_ROOT/apps/cli/lib/bin.js --profile web" 2>/dev/null || true
 
 "$APP_DIR/Contents/MacOS/$BINARY_NAME" &
 APP_PID=$!
-trap 'kill $APP_PID 2>/dev/null; rm -rf "$TMP_DIR"' EXIT
+trap 'kill $APP_PID 2>/dev/null || true; rm -rf "$TMP_DIR"' EXIT
 
 READY=false
 for i in $(seq 1 30); do
     sleep 1
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/ 2>/dev/null || echo "000")
     if [ "$HTTP_CODE" = "200" ]; then
-        READY=true
-        break
+        # Confirm the responder is this bundle's own dsh, not a leftover from
+        # another copy of the app or an unrelated service on :6080.
+        LISTENER_PID=$(lsof -nP -iTCP:6080 -sTCP:LISTEN -t 2>/dev/null | head -1)
+        if [ -n "$LISTENER_PID" ]; then
+            LISTENER_CMD=$(ps -p "$LISTENER_PID" -o command= 2>/dev/null || true)
+            case "$LISTENER_CMD" in
+                *"$DSH_ROOT/apps/cli/lib/bin.js --profile web"*)
+                    READY=true
+                    break
+                    ;;
+            esac
+        fi
     fi
 done
 
@@ -463,8 +475,11 @@ else
     warn "Smoke test: server did not become ready in 30s (bundle may still work)"
 fi
 
-kill $APP_PID 2>/dev/null
+kill $APP_PID 2>/dev/null || true
 wait $APP_PID 2>/dev/null || true
+# The dsh child outlives a SIGTERM'd app; terminate it so the smoke test never
+# leaves an orphan holding :6080.
+pkill -f "$DSH_ROOT/apps/cli/lib/bin.js --profile web" 2>/dev/null || true
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 # =============================================================================
