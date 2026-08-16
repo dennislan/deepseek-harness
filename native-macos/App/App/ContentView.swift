@@ -16,12 +16,6 @@ struct ContentView: View {
             // 标题栏独立占位:不与 WebView 重叠,网页内容不会被遮挡
             TitleBar()
                 .frame(height: titleBarHeight)
-                .overlay(alignment: .trailing) {
-                    Text("Power by DeepSeek")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.trailing, 8)
-                }
             content
         }
         .onAppear {
@@ -96,9 +90,7 @@ struct ContentView: View {
     }
 }
 
-/// 标题栏高度(pt):frame 修饰符、`intrinsicContentSize` 与 `updateNSView`
-/// 三处共用,改高度只动这一处。高度需容纳右上角 "Power by DeepSeek" 文字。
-private let titleBarHeight: CGFloat = 28
+private let titleBarHeight: CGFloat = 8
 
 private struct TitleBar: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { TitleBarView() }
