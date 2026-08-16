@@ -36,12 +36,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(MovableWindowRepresentable())
+        .background(BackgroundRepresentable())
         .overlay(alignment: .top) {
-            Color.clear
+            TitleBarRepresentable()
                 .frame(height: 28)
-                .contentShape(Rectangle())
-                .onTapGesture {}
         }
         .onAppear {
             // Listen for status changes
@@ -89,22 +87,25 @@ struct ContentView: View {
     }
 }
 
-/// hiddenTitleBar 窗口无系统拖拽区；此透明视图设置
-/// isMovableByWindowBackground = true 使整个窗口背景可拖动，
-/// 并通过 mouseDownCanMoveWindow 让自身参与拖拽。
-/// WKWebView 会吞掉 mouseDown，但窗口级别的 isMovableByWindowBackground
-/// 仍让标题栏区域（顶部 28pt 覆盖层）和其他非 WebView 区域可拖动。
-private final class MovableWindowView: NSView {
-    override var mouseDownCanMoveWindow: Bool { true }
+/// 背景层：保持默认 mouseDownCanMoveWindow = false，
+/// 窗口背景区域不可拖动，仅标题栏视图可拖动。
+private final class BackgroundView: NSView {}
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        window?.isMovableByWindowBackground = true
-    }
+private struct BackgroundRepresentable: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { BackgroundView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-private struct MovableWindowRepresentable: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { MovableWindowView() }
+/// 标准高度标题栏视图：仅该区域允许拖动窗口。
+/// hiddenTitleBar 窗口无系统拖拽区，重写 mouseDownCanMoveWindow = true
+/// 使此独立 NSView 独占拖拽能力；位于 WebView 之上的 overlay，
+/// 不被 WKWebView 吞掉 mouseDown。
+private final class TitleBarView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+}
+
+private struct TitleBarRepresentable: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { TitleBarView() }
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
@@ -119,7 +120,7 @@ struct WebViewContainer: NSViewRepresentable {
         prefs.allowsContentJavaScript = true
         config.defaultWebpagePreferences = prefs
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        let webView = MovableWKWebView(frame: .zero, configuration: config)
+        let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         bridge.webView = webView
 
@@ -184,14 +185,5 @@ struct WebViewContainer: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
             NSLog("[DSH] Page loaded: \(webView.url?.absoluteString ?? "?")")
         }
-    }
-}
-
-private final class MovableWKWebView: WKWebView {
-    override var mouseDownCanMoveWindow: Bool { true }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        window?.isMovableByWindowBackground = true
     }
 }

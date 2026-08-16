@@ -40,15 +40,23 @@ actor DshServer {
         status = .starting
         postStatusChanged()
 
-        let nodePath: String
-        if let envNode = ProcessInfo.processInfo.environment["DSH_NODE_PATH"] {
-            nodePath = envNode
-        } else {
-            nodePath = locateNode() ?? findNodeInEnv() ?? "/usr/local/bin/node"
-        }
+        // Runtime resolution order: embedded bundle node → DSH_NODE_PATH →
+        // system node (locateNode/findNodeInEnv). The embedded runtime makes the
+        // app self-contained on a clean macOS; DSH_NODE_PATH and system node
+        // remain as explicit/debugging fallbacks.
+        let nodePath: String? = bundledNode()
+            ?? ProcessInfo.processInfo.environment["DSH_NODE_PATH"]
+            ?? locateNode()
+            ?? findNodeInEnv()
 
-        guard FileManager.default.fileExists(atPath: nodePath) else {
-            status = .failed("找不到 Node.js: \(nodePath)\n请确保 Node 22+ 已安装。")
+        guard let resolvedNode = nodePath, FileManager.default.fileExists(atPath: resolvedNode) else {
+            status = .failed(
+                "找不到可用的 Node.js 运行时。\n\n" +
+                "• 内嵌运行时缺失：Contents/Resources/node/bin/node 不存在（重新打包应先运行 release.sh 内嵌 Node）。\n" +
+                "• 且未设置环境变量 DSH_NODE_PATH。\n" +
+                "• 且系统未安装 Node 22+。\n\n" +
+                "请安装 Node.js 22+（https://nodejs.org），或设置 DSH_NODE_PATH 指向 node 可执行文件。"
+            )
             postStatusChanged()
             return
         }
@@ -109,7 +117,7 @@ actor DshServer {
         }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: nodePath)
+        process.executableURL = URL(fileURLWithPath: resolvedNode)
         process.arguments = [binPath.path, "--profile", "web", "--port", "\(port)"]
 
         // Persist user data under ~/.dsh; an explicit DSH_HOME wins (matches
@@ -343,8 +351,16 @@ actor DshServer {
         return defaultPort
     }
 
-    private func locateNode() -> String? {
-        for candidate in ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"] {
+    /// Returns the path to the app-bundled Node runtime
+    /// (Contents/Resources/node/bin/node), or nil when it is absent. This makes
+    /// the app self-contained on a clean macOS with no system Node.
+    private func bundledNode() -> String? {
+        guard let resourceURL = Bundle.main.resourceURL else { return nil }
+        let nodeURL = resourceURL.appendingPathComponent("node/bin/node")
+        return FileManager.default.fileExists(atPath: nodeURL.path) ? nodeURL.path : nil
+    }
+
+    private func locateNode() -> String? {        for candidate in ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"] {
             if FileManager.default.fileExists(atPath: candidate) { return candidate }
         }
         return nil
