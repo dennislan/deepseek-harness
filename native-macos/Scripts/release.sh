@@ -2,17 +2,20 @@
 # =============================================================================
 # DeepSeek Harness macOS — Release Build Script
 #
-# One-command release build:
+# One-command release build. The default assembles dsh-root from the published
+# npm production closure (@deepseek-ai/dsh@0.1.0-rc.6, --omit=dev), installed
+# once into native-macos/dist/.dsh-npm-closure and reused across runs:
 #   ./native-macos/Scripts/release.sh
 #
 # Options:
-#   ./native-macos/Scripts/release.sh --skip-dsh     skip pnpm build
+#   ./native-macos/Scripts/release.sh --skip-dsh     skip dsh install (reuse npm closure)
 #   ./native-macos/Scripts/release.sh --strip        strip debug symbols
 #   ./native-macos/Scripts/release.sh --dmg          also create .dmg installer
 #   ./native-macos/Scripts/release.sh --sign <id>    codesign with identity (default: ad-hoc)
 #   ./native-macos/Scripts/release.sh --notarize     notarize after signing
-#   ./native-macos/Scripts/release.sh --clean        pnpm run clean first
-#   ./native-macos/Scripts/release.sh --no-prune     keep dev deps and build artifacts (debug)
+#   ./native-macos/Scripts/release.sh --clean        npm mode: reinstall the closure fresh
+#   ./native-macos/Scripts/release.sh --no-prune     ignored in npm mode (no dev deps to retain)
+#   ./native-macos/Scripts/release.sh --from-source  assemble from the local pnpm dev tree (original path)
 #
 # Outputs:
 #   native-macos/dist/DeepSeekHarness.app   (self-contained, ready to ship)
@@ -31,6 +34,8 @@ MODULE_CACHE="$TMP_DIR/module-cache"
 SDK_PATH=$(xcrun --sdk macosx --show-sdk-path 2>/dev/null \
     || echo "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk")
 SRC_DIR="$SCRIPT_DIR/../App"
+NPM_DSH_VERSION="0.1.0-rc.6"
+NPM_CLOSURE_DIR="$SCRIPT_DIR/../dist/.dsh-npm-closure"
 
 # ── Flags ──────────────────────────────────────────────────────────────────────
 SKIP_DSH=false
@@ -40,6 +45,7 @@ CODE_SIGN_ID=""
 NOTARIZE=false
 CLEAN_FIRST=false
 PRUNE=true
+FROM_SOURCE=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -63,6 +69,7 @@ while [ $# -gt 0 ]; do
         --notarize)   NOTARIZE=true; shift ;;
         --clean)      CLEAN_FIRST=true; shift ;;
         --no-prune)   PRUNE=false; shift ;;
+        --from-source) FROM_SOURCE=true; shift ;;
         *) echo "Unknown flag: $1" >&2; exit 1 ;;
     esac
 done
@@ -89,15 +96,35 @@ mkdir -p "$TMP_DIR" "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 # =============================================================================
 # Step 1: Build dsh (Node.js side)
 # =============================================================================
-if [ "$SKIP_DSH" = true ]; then
-    info "Skipping pnpm build (--skip-dsh)"
+if [ "$FROM_SOURCE" = true ]; then
+    # from-source (original path): build from the local pnpm dev tree
+    if [ "$SKIP_DSH" = true ]; then
+        info "Skipping pnpm build (--skip-dsh)"
+    else
+        step "Building dsh (pnpm run build)..."
+        cd "$PROJECT_ROOT"
+        [ "$CLEAN_FIRST" = true ] && pnpm run clean
+        pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+        pnpm run build || fail "pnpm build failed"
+        info "dsh built"
+    fi
 else
-    step "Building dsh (pnpm run build)..."
-    cd "$PROJECT_ROOT"
-    [ "$CLEAN_FIRST" = true ] && pnpm run clean
-    pnpm install --frozen-lockfile 2>/dev/null || pnpm install
-    pnpm run build || fail "pnpm build failed"
-    info "dsh built"
+    # npm mode (default): install the published production closure
+    if [ "$PRUNE" = false ]; then
+        warn "--no-prune is ignored in npm mode: the production closure has no dev dependencies to retain"
+    fi
+    if [ "$SKIP_DSH" = true ]; then
+        if [ ! -d "$NPM_CLOSURE_DIR/node_modules" ]; then
+            fail "npm closure missing at $NPM_CLOSURE_DIR — run without --skip-dsh to install it"
+        fi
+        info "Reusing npm closure at $NPM_CLOSURE_DIR (--skip-dsh)"
+    else
+        [ "$CLEAN_FIRST" = true ] && rm -rf "$NPM_CLOSURE_DIR"
+        step "Installing npm production closure (@deepseek-ai/dsh@$NPM_DSH_VERSION)..."
+        npm install "@deepseek-ai/dsh@$NPM_DSH_VERSION" --omit=dev --no-audit --no-fund --prefix "$NPM_CLOSURE_DIR" \
+            || fail "npm install of @deepseek-ai/dsh@$NPM_DSH_VERSION failed (registry unreachable?)"
+        info "npm closure installed"
+    fi
 fi
 
 # =============================================================================
@@ -149,10 +176,14 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BINARY_PATH" "$APP_DIR/Contents/MacOS/$BINARY_NAME"
 chmod +x "$APP_DIR/Contents/MacOS/$BINARY_NAME"
 
-# Create dsh-root inside the bundle
-DSH_ROOT="$APP_DIR/Contents/Resources/dsh-root"
-mkdir -p "$DSH_ROOT"
+# Create dsh-root inside the bundle. The path must be normalized (no
+# "Scripts/.."): the app spawns dsh with Bundle.resourceURL-derived paths, so
+# the smoke test's pkill/listener patterns only match a canonical path.
+mkdir -p "$APP_DIR/Contents/Resources/dsh-root"
+DSH_ROOT="$(cd "$APP_DIR/Contents/Resources/dsh-root" && pwd)"
 
+if [ "$FROM_SOURCE" = true ]; then
+# ── from-source (original path): assemble the full pnpm dev tree ──
 SRC="$PROJECT_ROOT"
 
 # ── Prune excludes ────────────────────────────────────────────────────────────
@@ -370,10 +401,39 @@ find "$DSH_ROOT" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
 
 DSH_ROOT_SIZE=$(du -sh "$DSH_ROOT" | cut -f1)
 info "dsh-root total: $DSH_ROOT_SIZE"
+else
+# ── npm mode (default): assemble from the published production closure ──
+# npm layout is flat (no .pnpm store, no symlink farm): one rsync of
+# node_modules/ is self-contained; apps/cli and apps/web/dist are relative
+# symlinks into the closure so the bundle stays offline-safe and signable.
+if [ ! -d "$NPM_CLOSURE_DIR/node_modules" ]; then
+    fail "npm closure node_modules missing at $NPM_CLOSURE_DIR — run release.sh without --skip-dsh"
+fi
+rsync -a "$NPM_CLOSURE_DIR/node_modules/" "$DSH_ROOT/node_modules/" \
+    || fail "Failed to copy npm closure node_modules"
+info "  node_modules ($(du -sh "$DSH_ROOT/node_modules" | cut -f1))"
+
+# apps/cli -> ../node_modules/@deepseek-ai/dsh: mkdir creates the parent;
+# rm -rf clears a leftover real directory from an earlier from-source run
+# before the symlink replaces it.
+mkdir -p "$DSH_ROOT/apps/cli"
+rm -rf "$DSH_ROOT/apps/cli"
+ln -sfn "../node_modules/@deepseek-ai/dsh" "$DSH_ROOT/apps/cli"
+info "  apps/cli -> ../node_modules/@deepseek-ai/dsh"
+
+# apps/web/dist is two levels below dsh-root, so its closure target needs
+# ../../node_modules (apps/web/dist -> dsh-root/node_modules/...).
+mkdir -p "$DSH_ROOT/apps/web"
+ln -sfn "../../node_modules/@deepseek-ai/dsh-web-frontend/dist" "$DSH_ROOT/apps/web/dist"
+info "  apps/web/dist -> ../../node_modules/@deepseek-ai/dsh-web-frontend/dist"
+
+DSH_ROOT_SIZE=$(du -sh "$DSH_ROOT" | cut -f1)
+info "dsh-root total: $DSH_ROOT_SIZE"
+fi
 
 # Compile asset catalog: AppIcon.icns + Assets.car (LogoLight/LogoDark for splash)
 ICON_FILE=""
-ASSETS_CATALOG="$SRC/native-macos/App/Assets.xcassets"
+ASSETS_CATALOG="$SRC_DIR/Assets.xcassets"
 if [ -d "$ASSETS_CATALOG" ]; then
     xcrun actool "$ASSETS_CATALOG" \
         --platform macosx \
