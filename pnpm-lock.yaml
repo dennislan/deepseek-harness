@@ -78,9 +78,6 @@ importers:
       lefthook:
         specifier: ^2.1.9
         version: 2.1.9
-      lefthook-darwin-arm64:
-        specifier: ^2.1.10
-        version: 2.1.10
       lightningcss:
         specifier: ^1.32.0
         version: 1.32.0
@@ -12720,11 +12717,6 @@ packages:
   layout-base@2.0.1:
     resolution: {integrity: sha512-dp3s92+uNI1hWIpPGH3jK2kxE2lMjdXdr+DH8ynZHpd6PUlH6x6cbuXnoMmiNumznqaNO31xu9e79F0uuZ0JFg==}
 
-  lefthook-darwin-arm64@2.1.10:
-    resolution: {integrity: sha512-nw+X8wRNDoUUV6WSteyKBbcLySq+fsmZt5WV/s50ZJpysmsDKJOUMln6SllNfP+60dzUahAO7REco/2633BsLg==}
-    cpu: [arm64]
-    os: [darwin]
-
   lefthook-darwin-arm64@2.1.9:
     resolution: {integrity: sha512-119HryNcvr4nqn0wUIrNPgpMEPn9yMQzEcW/lezRsnb56PCJriJB92+MCySPVcWDxJnZef7o0T3jdnPNiSH7Qg==}
     cpu: [arm64]
@@ -17996,8 +17988,6 @@ snapshots:
   layout-base@1.0.2: {}
 
   layout-base@2.0.1: {}
-
-  lefthook-darwin-arm64@2.1.10: {}
 
   lefthook-darwin-arm64@2.1.9:
     optional: true
