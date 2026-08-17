@@ -61,7 +61,8 @@ SRC_DIR="$NATIVE_MACOS_DIR/App"
 PRUNE_SCRIPT="$SCRIPT_DIR/prune-node-modules.mjs"
 
 # npm 生产闭包（默认发布模式）：@deepseek-ai/dsh 的生产依赖，安装一次复用
-NPM_DSH_VERSION="0.1.0-rc.7"
+NPM_DSH_VERSION="$(npm view @deepseek-ai/dsh version --registry https://registry.npmjs.org 2>/dev/null || echo '0.1.0-rc.6')"
+echo -e "  ${CYAN}使用 npm 最新版本: ${NPM_DSH_VERSION}${NC}"
 NPM_CLOSURE_DIR="$NATIVE_MACOS_DIR/dist/.dsh-npm-closure"
 
 # 一键模式：独立拉取的官方源码树（构建缓存，不入库）

@@ -20,8 +20,8 @@ actor DshServer {
     var statusText: String {
         switch status {
         case .stopped:    return "Loading..."
-        case .starting:   return "正在启动 dsh 服务…"
-        case .running:    return "已就绪"
+        case .starting:   return "starting..."
+        case .running:    return "Running"
         case .failed(let msg): return "启动失败: \(msg)"
         }
     }
