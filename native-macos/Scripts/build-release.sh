@@ -61,6 +61,12 @@ SRC_DIR="$NATIVE_MACOS_DIR/App"
 PRUNE_SCRIPT="$SCRIPT_DIR/prune-node-modules.mjs"
 
 # npm 生产闭包（默认发布模式）：@deepseek-ai/dsh 的生产依赖，安装一次复用
+# =============================================================================
+# 模块 0.5：日志颜色常量（必须在模块 3 之前定义，供 early echo 使用）
+# =============================================================================
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+
 NPM_DSH_VERSION="$(npm view @deepseek-ai/dsh version --registry https://registry.npmjs.org 2>/dev/null || echo '0.1.0-rc.6')"
 echo -e "  ${CYAN}使用 npm 最新版本: ${NPM_DSH_VERSION}${NC}"
 NPM_CLOSURE_DIR="$NATIVE_MACOS_DIR/dist/.dsh-npm-closure"
@@ -93,8 +99,6 @@ esac
 # =============================================================================
 # 模块 1：日志与错误处理
 # =============================================================================
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 step() { echo -e "\n${CYAN}▶${NC} ${BOLD}[$(date +%H:%M:%S)] $*${NC}"; }
 info() { echo -e "  ${GREEN}✓${NC} $*"; }
