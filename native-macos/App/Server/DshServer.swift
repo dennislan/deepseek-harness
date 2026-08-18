@@ -124,6 +124,31 @@ actor DshServer {
         // dsh-home-paths precedence: configured > $DSH_HOME > ~/.dsh).
         var env = process.environment ?? [:]
         env["DSH_HOME"] = homePath
+        // The dsh child (and the plugin market it hosts) needs a PATH that
+        // finds the user's pnpm. A GUI launch inherits only launchd's minimal
+        // PATH (/usr/bin:/bin:…) with no Node or pnpm, so the market's own
+        // pnpm auto-provisioner pulls a *second* pnpm whose content-addressable
+        // store diverges from the one that built the profile — every later
+        // `pnpm add`/`update` then fails with ERR_PNPM_UNEXPECTED_STORE. Expand
+        // PATH with the resolved Node bin, the user's nvm Node bins, and the
+        // common macOS Node/pnpm locations, preserving any inherited PATH.
+        env["PATH"] = Self.augmentedChildPath(inheriting: env["PATH"], resolvedNodeBin: (resolvedNode as NSString).deletingLastPathComponent)
+        // Same story for PNPM_HOME: pnpm's global store defaults to it, so a
+        // GUI launch that drops it can land on a different store than the one
+        // the profile was built against.
+        if env["PNPM_HOME"]?.isEmpty ?? true {
+            env["PNPM_HOME"] = (NSHomeDirectory() as NSString).appendingPathComponent("Library/pnpm")
+        }
+        // The plugin market is a user-driven sandbox where installing a
+        // just-published plugin is the point; pnpm ≥11's default fresh-release
+        // hold would otherwise block every change to a profile that contains a
+        // young package (ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION). The market
+        // already retries once with a one-shot bypass, but a GUI launch has no
+        // shell to set it in, so export the equivalent npm-style config so the
+        // market's pnpm spawn inherits the relaxed policy.
+        if env["npm_config_minimumReleaseAge"]?.isEmpty ?? true {
+            env["npm_config_minimumReleaseAge"] = "0"
+        }
         process.environment = env
         // Capture dsh boot output so a non-zero exit shows the real error in
         // the app's status instead of a bare code=1.
@@ -373,6 +398,49 @@ actor DshServer {
             if FileManager.default.fileExists(atPath: nodePath.path) { return nodePath.path }
         }
         return nil
+    }
+
+    /// Builds the `PATH` for the dsh child so it can locate Node and pnpm.
+    /// A GUI launch inherits only launchd's minimal PATH (no Node, no pnpm),
+    /// which forces the plugin market to auto-provision a second pnpm whose
+    /// store diverges from the profile's — the `ERR_PNPM_UNEXPECTED_STORE`
+    /// install failure. The resolved Node bin and the user's nvm Node bins
+    /// lead, followed by the common macOS locations; any PATH already present
+    /// (e.g. a terminal-launched app) is preserved and de-duplicated.
+    /// - Parameters:
+    ///   - inherited: the parent process PATH, or nil.
+    ///   - resolvedNodeBin: the bin directory of the Node chosen to run dsh.
+    /// - Returns: a de-duplicated, order-preserving PATH string.
+    private static func augmentedChildPath(inheriting inherited: String?, resolvedNodeBin: String) -> String {
+        var candidates: [String] = []
+        candidates.append(resolvedNodeBin)
+        if let home = NSHomeDirectory().isEmpty ? nil : NSHomeDirectory() as String? {
+            let nvmRoot = (home as NSString).appendingPathComponent(".nvm/versions/node")
+            if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmRoot) {
+                for version in versions where !version.hasPrefix(".") {
+                    candidates.append((nvmRoot as NSString).appendingPathComponent("\(version)/bin"))
+                }
+            }
+        }
+        candidates.append(contentsOf: [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ])
+        if let inherited {
+            candidates.append(contentsOf: inherited.split(separator: ":").map(String.init))
+        }
+        var seen = Set<String>()
+        var result: [String] = []
+        for candidate in candidates {
+            guard !candidate.isEmpty, !seen.contains(candidate) else { continue }
+            seen.insert(candidate)
+            result.append(candidate)
+        }
+        return result.joined(separator: ":")
     }
 
     // MARK: - Project Root Resolution
