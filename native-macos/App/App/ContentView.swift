@@ -148,15 +148,44 @@ struct WebViewContainer: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     class Coordinator: NSObject, WKNavigationDelegate {
+        // 指向应用外站点（非 localhost）的链接在系统浏览器打开，
+        // 避免应用内 harness UI 被外部页面顶替。
+        private func isExternal(_ url: URL) -> Bool {
+            guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return false }
+            guard let host = url.host?.lowercased() else { return false }
+            return host != "localhost" && host != "127.0.0.1" && host != "::1" && !host.hasSuffix(".localhost")
+        }
+
         func webView(_ webView: WKWebView, decidePolicyFor navAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if let url = navAction.request.url, url.scheme != "http", url.scheme != "https" {
+            guard let url = navAction.request.url else { decisionHandler(.allow); return }
+            let scheme = url.scheme?.lowercased() ?? ""
+            // 非 http/https（mailto:、file: 等）交给系统处理
+            if scheme != "http" && scheme != "https" {
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
-            } else {
-                decisionHandler(.allow)
+                return
             }
+            // 用户点击的外部链接在系统默认浏览器打开
+            if navAction.navigationType == .linkActivated, isExternal(url) {
+                NSWorkspace.shared.open(url)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
         }
+
+        // target="_blank" 等新窗口链接：无内嵌窗口，转交系统浏览器打开
+        func webView(_ webView: WKWebView,
+                     createWebViewWithConfiguration configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction,
+                     windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if let url = navigationAction.request.url {
+                NSWorkspace.shared.open(url)
+            }
+            return nil
+        }
+
         func webView(_ webView: WKWebView, didFail nav: WKNavigation!, withError error: Error) {
             NSLog("[DSH] WebView error: \(error.localizedDescription)")
         }
