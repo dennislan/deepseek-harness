@@ -628,8 +628,13 @@ create_dmg() {
     [ "$CREATE_DMG" != true ] && return
     step "生成 DMG..."
     local DMG_DIR="$TMP_DIR/dmg-work"
+    local DMG_MOUNT="$TMP_DIR/dmg-mount"
+    local DMG_RW="$TMP_DIR/${APP_NAME}_temp.dmg"
     local DMG_PATH="$NATIVE_MACOS_DIR/dist/$APP_NAME.dmg"
-    rm -rf "$DMG_DIR"; mkdir -p "$DMG_DIR"
+    rm -rf "$DMG_DIR" "$DMG_MOUNT" "$DMG_RW"; mkdir -p "$DMG_DIR"
+
+    # 仅复制 app：Applications 软链接必须在镜像挂载后再创建，
+    # 否则 hdiutil -srcfolder 会跟随该链接、把整个 /Applications 拷入镜像导致转换失败。
     cp -R "$APP_DIR" "$DMG_DIR/"
 
     cat > "$DMG_DIR/.build_app" << 'PLIST'
@@ -654,9 +659,17 @@ create_dmg() {
             <key>IF Application</key><true/>
             <key>IF Doc mount</key><false/>
             <key>IF File</key><string>DeepSeekHarness.app</string>
-            <key>IF Loc</key><string>{0.500000, 0.500000}</string>
+            <key>IF Loc</key><string>{0.280000, 0.500000}</string>
             <key>IF Selected</key><true/>
             <key>IF Type</key><string>Application</string>
+        </dict>
+        <dict>
+            <key>IF Application</key><false/>
+            <key>IF Doc mount</key><false/>
+            <key>IF File</key><string>Applications</string>
+            <key>IF Loc</key><string>{0.720000, 0.500000}</string>
+            <key>IF Selected</key><false/>
+            <key>IF Type</key><string>Folder</string>
         </dict>
     </array>
     <key>IF Show status line</key><true/>
@@ -666,12 +679,28 @@ create_dmg() {
 </plist>
 PLIST
 
+    # 1) 生成可读写镜像（不含 Applications 链接）
     hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_DIR" \
-        -fs HFS+ -format UDRW "$TMP_DIR/${APP_NAME}_temp.dmg" 2>/dev/null \
+        -fs HFS+ -format UDRW "$DMG_RW" \
         || fail "DMG 创建失败"
-    hdiutil convert "$TMP_DIR/${APP_NAME}_temp.dmg" -format UDZO -o "$DMG_PATH" 2>/dev/null \
+
+    # 2) 挂载并在镜像内部创建 /Applications 软链接（不跟随到宿主系统）
+    local DEV
+    DEV="$(hdiutil attach -nobrowse -noautoopen -mountpoint "$DMG_MOUNT" "$DMG_RW" \
+        | awk '/Apple_HFS/ {print $1; exit}')"
+    [ -n "$DEV" ] || fail "DMG 挂载失败"
+    ln -sfn "/Applications" "$DMG_MOUNT/Applications" \
+        || { hdiutil detach "$DEV" 2>/dev/null || true; fail "创建 Applications 软链接失败"; }
+    # 避免 .build_app 等隐藏文件出现在最终镜像
+    rm -f "$DMG_MOUNT/.build_app" 2>/dev/null || true
+    hdiutil detach "$DEV" \
+        || fail "DMG 卸载失败"
+
+    # 3) 转换为压缩镜像（UDZO）
+    rm -f "$DMG_PATH"   # convert 不覆盖已存在文件，需先清理上次残留
+    hdiutil convert "$DMG_RW" -format UDZO -o "$DMG_PATH" \
         || fail "DMG 转换失败"
-    rm -rf "$DMG_DIR" "$TMP_DIR/${APP_NAME}_temp.dmg"
+    rm -rf "$DMG_DIR" "$DMG_MOUNT" "$DMG_RW"
     info "DMG：$(du -sh "$DMG_PATH" | awk '{print $1}')"
 }
 
