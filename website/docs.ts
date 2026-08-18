@@ -216,6 +216,14 @@ const develop = pairedPages([
     section: { root: '实战', en: 'Practice' },
     order: 2,
   },
+  {
+    source: 'docs/user/develop/plugin-dev-tutorial.md',
+    route: 'develop/plugin-dev-tutorial.md',
+    label: { root: '插件开发完整教程', en: 'Plugin development tutorial' },
+    sidebar: { root: 'zh-develop', en: 'en-develop' },
+    section: { root: '基础', en: 'Basics' },
+    order: 0,
+  },
 ])
 
 const cordisTutorial = pairedPages(([
@@ -394,6 +402,7 @@ const reference = [
     ['adding-an-llm-adapter.md', '新增 LLM Adapter', 'Adding an LLM adapter'],
     ['adding-a-settings-card.md', '新增设置卡片', 'Adding a settings card'],
     ['extension-cookbook.md', '扩展模式', 'Extension patterns'],
+    ['oa-leave-plugin.md', '开发 OA 请假插件', 'Build an OA leave plugin'],
   ] as const).map(([file, rootLabel, enLabel], order): PairedPage => ({
     source: `docs/cookbook/${file}`,
     route: `reference/cookbook/${file}`,

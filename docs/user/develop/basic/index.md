@@ -142,3 +142,4 @@ Function form is sufficient in most cases. Use class form when the plugin provid
 - [Build a tool](./tool.md) — learn the tool definition DSL
 - [Plugin configuration](./config.md) — accept user configuration
 - [Cordis tutorial](../../../cordis-tutorial/index.md) — the plugin framework underneath, built from a scratch directory with no API key
+- [Full plugin development tutorial](../plugin-dev-tutorial.md) — end-to-end from scratch: plugin → tool → config → events → bundle → install
