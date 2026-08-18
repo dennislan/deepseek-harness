@@ -20,7 +20,6 @@ struct DeepSeekHarnessApp: App {
                 }
                 .frame(minWidth: 960, minHeight: 640)
         }
-        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .appInfo) {

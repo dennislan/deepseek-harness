@@ -13,9 +13,6 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 标题栏独立占位:不与 WebView 重叠,网页内容不会被遮挡
-            TitleBar()
-                .frame(height: titleBarHeight)
             content
         }
         .onAppear {
@@ -87,50 +84,6 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-    }
-}
-
-private let titleBarHeight: CGFloat = 8
-
-private struct TitleBar: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { TitleBarView() }
-    func updateNSView(_ nsView: NSView, context: Context) {
-        // 强制固定高度:SwiftUI 的 frame 修饰符对 NSViewRepresentable 的
-        // 约束在部分 macOS 版本上不可靠,直接设置 NSView frame 兜底。
-        nsView.frame.size.height = titleBarHeight
-    }
-}
-
-private final class TitleBarView: NSView {
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: titleBarHeight)
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        window?.isMovableByWindowBackground = true
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 {
-            window?.performZoom(nil)
-        } else {
-            super.mouseDown(with: event)
-        }
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        self
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        // 底部 1pt 分隔线,提示拖动区域边界
-        NSColor.separatorColor.setFill()
-        NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
     }
 }
 
