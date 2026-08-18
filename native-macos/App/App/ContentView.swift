@@ -148,9 +148,15 @@ struct WebViewContainer: NSViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(bridge: bridge) }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+        private let bridge: BridgeManager
+
+        init(bridge: BridgeManager) {
+            self.bridge = bridge
+        }
+
         // 指向应用外站点（非 localhost）的链接在系统浏览器打开，
         // 避免应用内 harness UI 被外部页面顶替。
         private func isExternal(_ url: URL) -> Bool {
@@ -195,6 +201,31 @@ struct WebViewContainer: NSViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
             NSLog("[DSH] Page loaded: \(webView.url?.absoluteString ?? "?")")
+        }
+
+        // JS window.alert() → macOS NSAlert
+        func webView(_ webView: WKWebView,
+                     runJavaScriptAlertPanelWithMessage message: String,
+                     initiatedByFrame frame: WKFrameInfo,
+                     completionHandler: @escaping () -> Void) {
+            bridge.handleAlert(message: message, completion: completionHandler)
+        }
+
+        // JS window.confirm() → macOS NSAlert with OK/Cancel
+        func webView(_ webView: WKWebView,
+                     runJavaScriptConfirmPanelWithMessage message: String,
+                     initiatedByFrame frame: WKFrameInfo,
+                     completionHandler: @escaping (Bool) -> Void) {
+            bridge.handleConfirm(message: message, completion: completionHandler)
+        }
+
+        // JS window.prompt() → macOS NSAlert with text input
+        func webView(_ webView: WKWebView,
+                     runJavaScriptTextInputPanelWithPrompt prompt: String,
+                     defaultText: String?,
+                     initiatedByFrame frame: WKFrameInfo,
+                     completionHandler: @escaping (String?) -> Void) {
+            bridge.handlePrompt(prompt: prompt, defaultText: defaultText ?? "", completion: completionHandler)
         }
     }
 }

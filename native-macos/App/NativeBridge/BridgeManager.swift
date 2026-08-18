@@ -95,6 +95,13 @@ class BridgeManager: NSObject, WKScriptMessageHandler {
                 self?.respond(id: messageId, data: accepted)
             }
 
+        case "prompt":
+            let message = params["message"] as? String ?? ""
+            let defaultVal = params["default"] as? String ?? ""
+            handlePrompt(prompt: message, defaultText: defaultVal) { [weak self] result in
+                self?.respond(id: messageId, data: result)
+            }
+
         default:
             respond(id: messageId, error: "未知方法: \(method)")
         }
@@ -189,6 +196,49 @@ class BridgeManager: NSObject, WKScriptMessageHandler {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "确定")
         alert.runModal()
+    }
+
+    // WKUIDelegate 回调入口：JS window.alert()
+    func handleAlert(message: String, completion: @escaping () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "JavaScript 提示"
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "确定")
+        alert.runModal()
+        completion()
+    }
+
+    // WKUIDelegate 回调入口：JS window.confirm()
+    func handleConfirm(message: String, completion: @escaping (Bool) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "确认"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "取消")
+        let response = alert.runModal()
+        completion(response == .alertFirstButtonReturn)
+    }
+
+    // WKUIDelegate 回调入口：JS window.prompt()
+    func handlePrompt(prompt: String, defaultText: String, completion: @escaping (String?) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "输入"
+        alert.informativeText = prompt
+        alert.alertStyle = .informational
+        let textInput = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        textInput.stringValue = defaultText
+        textInput.bezelStyle = .roundedBezel
+        alert.accessoryView = textInput
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "取消")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            completion(textInput.stringValue.isEmpty ? nil : textInput.stringValue)
+        } else {
+            completion(nil)
+        }
     }
 
     func confirmAlert(title: String, message: String, completion: @escaping (Bool) -> Void) {
