@@ -100,6 +100,9 @@ struct WebViewContainer: NSViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
+        // createWebViewWithConfiguration（target="_blank" / window.open 等）属于 WKUIDelegate，
+        // 不设置则外部新窗口链接不会触发，导致点击无反应。
+        webView.uiDelegate = context.coordinator
         bridge.webView = webView
 
         let bridgeJS = """
@@ -147,7 +150,7 @@ struct WebViewContainer: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    class Coordinator: NSObject, WKNavigationDelegate {
+    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         // 指向应用外站点（非 localhost）的链接在系统浏览器打开，
         // 避免应用内 harness UI 被外部页面顶替。
         private func isExternal(_ url: URL) -> Bool {
@@ -166,8 +169,9 @@ struct WebViewContainer: NSViewRepresentable {
                 decisionHandler(.cancel)
                 return
             }
-            // 用户点击的外部链接在系统默认浏览器打开
-            if navAction.navigationType == .linkActivated, isExternal(url) {
+            // 外部链接（非 localhost）统一在系统默认浏览器打开，避免顶替应用内 harness UI。
+            // 不限 navigationType：覆盖点击、程序化跳转与 window.open 等触发方式。
+            if isExternal(url) {
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
                 return
@@ -177,7 +181,7 @@ struct WebViewContainer: NSViewRepresentable {
 
         // target="_blank" 等新窗口链接：无内嵌窗口，转交系统浏览器打开
         func webView(_ webView: WKWebView,
-                     createWebViewWithConfiguration configuration: WKWebViewConfiguration,
+                     createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
