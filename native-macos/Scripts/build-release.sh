@@ -477,7 +477,7 @@ prune_exports_reachability() {
     if [ "$PRUNE" = true ] && [ -f "$PRUNE_SCRIPT" ]; then
         step "按 exports 可达性剪枝 node_modules..."
         if node "$PRUNE_SCRIPT" "$DSH_ROOT/node_modules" 2>&1; then
-            info "exports 可达性剪枝完成"
+            info "精简代码"
         else
             warn "prune-node-modules.mjs 报告问题；继续使用剪枝前树"
         fi
