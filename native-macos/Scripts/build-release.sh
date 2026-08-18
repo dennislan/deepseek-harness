@@ -68,7 +68,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 NPM_DSH_VERSION="$(npm view @deepseek-ai/dsh version --registry https://registry.npmjs.org 2>/dev/null || echo '0.1.0-rc.6')"
-echo -e "  ${CYAN}使用 npm 最新版本: ${NPM_DSH_VERSION}${NC}"
+# printf '%b\n' "  ${CYAN}使用 npm 最新版本: ${NPM_DSH_VERSION}${NC}"
 NPM_CLOSURE_DIR="$NATIVE_MACOS_DIR/dist/.dsh-npm-closure"
 
 # 一键模式：独立拉取的官方源码树（构建缓存，不入库）
@@ -93,17 +93,18 @@ NODE_SHA_URL="${NODE_DIST_BASE}/${NODE_VERSION}/SHASUMS256.txt"
 
 ARCH="${ARCH:-arm64}"
 case "$ARCH" in
-    *[!a-zA-Z0-9_-]*) echo -e "${RED}✗${NC} 非法 ARCH 值 '$ARCH' (允许 [a-zA-Z0-9_-])" >&2; exit 1 ;;
+    *[!a-zA-Z0-9_-]*) printf '%b\n' "${RED}✗${NC} 非法 ARCH 值 '$ARCH' (允许 [a-zA-Z0-9_-])" >&2; exit 1 ;;
 esac
 
 # =============================================================================
 # 模块 1：日志与错误处理
 # =============================================================================
 
-step() { echo -e "\n${CYAN}▶${NC} ${BOLD}[$(date +%H:%M:%S)] $*${NC}"; }
-info() { echo -e "  ${GREEN}✓${NC} $*"; }
-warn() { echo -e "  ${YELLOW}⚠${NC} $*"; }
-fail() { echo -e "${RED}✗${NC} $*\n${RED}构建中止。${NC}" >&2; exit 1; }
+# printf '%b' 跨 shell 可靠解释 ANSI 转义；echo -e 在 sh/POSIX 下会把 '-e' 原样输出
+step() { printf '%b\n' "\n${CYAN}▶${NC} ${BOLD}[$(date +%H:%M:%S)] $*${NC}"; }
+info() { printf '%b\n' "  ${GREEN}✓${NC} $*"; }
+warn() { printf '%b\n' "  ${YELLOW}⚠${NC} $*"; }
+fail() { printf '%b\n' "${RED}✗${NC} $*\n${RED}构建中止。${NC}" >&2; exit 1; }
 
 # 清理函数：确保临时目录与可能残留的 APP 子进程被回收
 cleanup() {
@@ -227,7 +228,7 @@ embed_node_runtime() {
         return
     fi
     if [ -x "$NODE_DEST/bin/node" ]; then
-        info "复用已存在的内嵌 Node @ $NODE_DEST ($(du -h "$NODE_DEST" | cut -f1))"
+        info "复用已存在的内嵌 Node @ $NODE_DEST ($(du -sh "$NODE_DEST" | awk '{print $1}'))"
         return
     fi
 
@@ -239,7 +240,7 @@ embed_node_runtime() {
             || fail "复制本地 node 失败：$NODE_LOCAL_PATH/bin/node"
         [ -f "$NODE_LOCAL_PATH/LICENSE" ] && cp "$NODE_LOCAL_PATH/LICENSE" "$NODE_DEST/LICENSE"
         chmod +x "$NODE_DEST/bin/node"
-        info "内嵌 Node 已复制 ($(du -h "$NODE_DEST" | cut -f1))"
+        info "内嵌 Node 已复制 ($(du -sh "$NODE_DEST" | awk '{print $1}'))"
         return
     fi
 
@@ -273,7 +274,7 @@ embed_node_runtime() {
     [ -f "$NODE_EXTRACT/LICENSE" ] && cp "$NODE_EXTRACT/LICENSE" "$NODE_DEST/LICENSE"
     chmod +x "$NODE_DEST/bin/node"
     rm -f "$NODE_DL"
-    info "内嵌 Node 已安装 ($(du -h "$NODE_DEST" | cut -f1))"
+    info "内嵌 Node 已安装 ($(du -sh "$NODE_DEST" | awk '{print $1}'))"
 }
 
 # =============================================================================
@@ -305,7 +306,7 @@ compile_swift() {
     chmod +x "$BINARY_PATH"
 
     BINARY_PATH_FINAL="$BINARY_PATH"
-    info "Swift 二进制：$(du -h "$BINARY_PATH" | cut -f1)（strip=${STRIP:-true}）"
+    info "Swift 二进制：$(du -sh "$BINARY_PATH" | awk '{print $1}')（strip=${STRIP:-true}）"
 }
 
 # =============================================================================
@@ -671,16 +672,18 @@ PLIST
     hdiutil convert "$TMP_DIR/${APP_NAME}_temp.dmg" -format UDZO -o "$DMG_PATH" 2>/dev/null \
         || fail "DMG 转换失败"
     rm -rf "$DMG_DIR" "$TMP_DIR/${APP_NAME}_temp.dmg"
-    info "DMG：$(du -h "$DMG_PATH" | cut -f1)"
+    info "DMG：$(du -sh "$DMG_PATH" | awk '{print $1}')"
 }
 
 # =============================================================================
 # 主流程
 # =============================================================================
 main() {
-    echo -e "${BOLD}${CYAN}══════════════════════════════════════════════════${NC}"
-    echo -e "${BOLD}${CYAN}  DeepSeek Harness macOS 构建  [模式: $MODE]${NC}"
-    echo -e "${BOLD}${CYAN}══════════════════════════════════════════════════${NC}"
+    printf '%b\n'
+    printf '%b\n' "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
+    printf '%b\n' "${BOLD}${CYAN}          Build DeepSeek Harness Desktop for macOS"
+    printf '%b\n' "${BOLD}${CYAN}            Dev by Dennis | dennis.lan@gmail.com "
+    printf '%b\n' "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
     mkdir -p "$TMP_DIR" "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
     # 阶段 1：准备 dsh 源码/产物（按模式分支）
@@ -746,17 +749,17 @@ main() {
 
     # 完成报告
     echo ""
-    echo -e "${BOLD}${GREEN}══════════════════════════════════════════════════${NC}"
-    echo -e "${BOLD}${GREEN}  ✅ 构建完成${NC}"
-    echo -e "${BOLD}${GREEN}══════════════════════════════════════════════════${NC}"
+    printf '%b\n' "${BOLD}${GREEN}══════════════════════════════════════════════════${NC}"
+    printf '%b\n' "${BOLD}${GREEN}  ✅ 构建完成${NC}"
+    printf '%b\n' "${BOLD}${GREEN}══════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "  ${CYAN}.app:${NC}  $APP_DIR"
-    echo -e "  ${CYAN}体积:${NC}  $(du -sh "$APP_DIR" | cut -f1)"
+    printf '%b\n' "  ${CYAN}.app:${NC}  $APP_DIR"
+    printf '%b\n' "  ${CYAN}体积:${NC}  $(du -sh "$APP_DIR" | cut -f1)"
     [ -f "$NATIVE_MACOS_DIR/dist/$APP_NAME.dmg" ] \
-        && echo -e "  ${CYAN}.dmg:${NC}  $NATIVE_MACOS_DIR/dist/$APP_NAME.dmg"
+        && printf '%b\n' "  ${CYAN}.dmg:${NC}  $NATIVE_MACOS_DIR/dist/$APP_NAME.dmg"
     echo ""
-    echo -e "  ${YELLOW}运行:${NC}    open \"$APP_DIR\""
-    echo -e "  ${YELLOW}分发:${NC}   scp \"$APP_DIR\" user@server:~/Apps/"
+    printf '%b\n' "  ${YELLOW}运行:${NC}    open \"$APP_DIR\""
+    printf '%b\n' "  ${YELLOW}分发:${NC}   scp \"$APP_DIR\" user@server:~/Apps/"
     echo ""
 }
 
