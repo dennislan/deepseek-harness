@@ -1,0 +1,28 @@
+# dsh-oauth bundle patch
+#
+# Two rows: the host half provides ctx.auth + /api/auth/* routes;
+# the client half renders the premium split-screen login overlay into
+# document.body. Both are disabled by default so the profile can enable
+# them selectively.
+#
+# To enable from your profile's cordis.patch.yml:
+#
+#   - id: dsh-oauth-host
+#     disabled: false
+#     config:
+#       apiUrl: 'https://auth.example.com'
+#       wechatEnabled: true        # optional
+#       wechatApiUrl: 'https://open.weixin.qq.com/connect'
+#
+#   - id: dsh-oauth-client
+#     disabled: false
+
+- insert:
+    - id: dsh-oauth-host
+      name: 'dsh-oauth'
+      disabled: true
+      config: {}
+
+    - id: dsh-oauth-client
+      name: 'dsh-oauth/client'
+      disabled: true

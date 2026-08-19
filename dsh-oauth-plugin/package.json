@@ -1,0 +1,74 @@
+{
+  "name": "dsh-oauth",
+  "version": "0.1.0",
+  "description": "Distributable OAuth/login plugin for DeepSeek Harness: username-password auth, WeChat Enterprise QR, session isolation by user",
+  "type": "module",
+  "main": "lib/host.js",
+  "types": "lib/types/host.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/host.d.ts",
+      "default": "./lib/host.js"
+    },
+    "./client": {
+      "types": "./lib/types/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    }
+  },
+  "files": [
+    "lib/host.js",
+    "lib/client.js",
+    "lib/invariant.js",
+    "lib/types/**/*.d.ts",
+    "lib/types/**/*.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "latest",
+    "@deepseek-ai/schemastery": "latest"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "build:client": "bash ../node_modules/.bin/tsdown --config tsdown.config.ts && node -e \"const fs=require('node:fs'),p='lib/client.cjs',d='lib/client.js',m=p+'.map',n=d+'.map';let c=fs.readFileSync(p,'utf8');c=c.replace(/# sourceMappingURL=client\\.cjs\\.map/,\\\u0027# sourceMappingURL=client.js.map\\\u0027);fs.writeFileSync(d,c);fs.copyFileSync(m,n);console.log('copied client.cjs -> client.js ('+fs.statSync(d).size+' bytes)')\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "latest",
+    "@deepseek-ai/dsh-invariants": "latest",
+    "@deepseek-ai/dsh-home-paths": "latest",
+    "@deepseek-ai/dsh-session": "latest",
+    "schemastery": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "lib",
+    "rootDir": "src",
+    "declarationDir": "lib/types",
+    "noEmit": false,
+    "skipLibCheck": true,
+    "strict": false,
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "@deepseek-ai/cordis": ["../vendor/cordis/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-invariants": ["../packages/runtime-diagnostics/invariants/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-home-paths": ["../packages/util/home-paths/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-session": ["../packages/core/session/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-session/types": ["../packages/core/session/lib/types/types.d.ts"],
+      "@deepseek-ai/schemastery": ["../vendor/schemastery/lib/types/index.d.ts"]
+    }
+  },
+  "references": []
+}
