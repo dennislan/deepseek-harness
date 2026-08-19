@@ -16,6 +16,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
+import { readFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -101,6 +102,9 @@ export class Auth extends Service {
   /** Absolute path to the on-disk session map. */
   private sessionMapPath: string
 
+  /** Path to the persisted current-user JSON file (id + displayName, no token). */
+  private currentUserPath: string
+
   /** Pending WeChat QR login flows, keyed by flowId. */
   private pendingWeChatLogins: Map<string, PendingWeChatLogin> = new Map()
 
@@ -113,6 +117,8 @@ export class Auth extends Service {
     this.config = { ...DEFAULT_CONFIG, ...config }
     const mapFileName = this.config.sessionMapFile ?? DEFAULT_CONFIG.sessionMapFile
     this.sessionMapPath = join(expandHomePath(process.env.DSH_HOME ?? '~/.dsh'), mapFileName)
+    this.currentUserPath = join(expandHomePath(process.env.DSH_HOME ?? '~/.dsh'), 'oauth-user.json')
+    void this._loadUserState()
   }
 
   // ---------------------------------------------------------------------------
@@ -140,7 +146,7 @@ export class Auth extends Service {
     if (this.config.mockEnabled) {
       if (request.username === 'admin' && request.password === 'admin') {
         const user: UserInfo = { id: 'mock-admin', displayName: 'Admin', token: 'mock-token' }
-        this.currentUser = user
+        this._setCurrentUser(user)
         return user
       }
       throw { code: 'INVALID_CREDENTIALS', message: 'Invalid username or password' }
@@ -168,7 +174,7 @@ export class Auth extends Service {
     }
 
     const data = (await response.json()) as LoginResponse
-    this.currentUser = data.user
+    this._setCurrentUser(data.user)
     return this.currentUser
   }
 
@@ -177,7 +183,7 @@ export class Auth extends Service {
    * attributed to the logged-in identity until the next login.
    */
   logout(): void {
-    this.currentUser = undefined
+    this._setCurrentUser(undefined)
   }
 
   /**
@@ -312,8 +318,45 @@ export class Auth extends Service {
     const user = data.user
     pending.user = user
     pending.status = 'confirmed'
-    this.currentUser = user
+    this._setCurrentUser(user)
     return user
+  }
+
+  // ---------------------------------------------------------------------------
+  // User persistence — survives server restart so the client skips the login overlay
+  // ---------------------------------------------------------------------------
+
+  private _loadUserState(): void {
+    try {
+      const text = readFileSync(this.currentUserPath, 'utf8')
+      const saved = JSON.parse(text) as { id: string; displayName: string }
+      this.currentUser = { id: saved.id, displayName: saved.displayName, token: '' }
+    } catch {
+      // Corrupt or missing file — start clean.
+    }
+  }
+
+  private _saveUserState(): void {
+    if (this.currentUser === undefined) return
+    const safe: { id: string; displayName: string } = {
+      id: this.currentUser.id,
+      displayName: this.currentUser.displayName,
+    }
+    try {
+      writeFile(this.currentUserPath, JSON.stringify(safe), { encoding: 'utf8', flag: 'wx' })
+    } catch {
+      // EEXIST: another process wrote first — ignore.
+    }
+  }
+
+  /** Set the current user and persist to disk (or clear the file on logout). */
+  private _setCurrentUser(user: UserInfo | undefined): void {
+    this.currentUser = user
+    if (user === undefined) {
+      try { unlinkSync(this.currentUserPath) } catch { /* absent is fine */ }
+    } else {
+      this._saveUserState()
+    }
   }
 
   // ---------------------------------------------------------------------------
