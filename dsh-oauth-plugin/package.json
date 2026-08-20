@@ -58,8 +58,8 @@
     }
   },
   "scripts": {
-    "build": "node build.mjs",
-    "build:client": "bash ../node_modules/.bin/tsdown --config tsdown.config.ts && node -e \"const fs=require('node:fs'),p='lib/client.cjs',d='lib/client.js',m=p+'.map',n=d+'.map';let c=fs.readFileSync(p,'utf8');c=c.replace(/# sourceMappingURL=client\\.cjs\\.map/,\\\u0027# sourceMappingURL=client.js.map\\\u0027);fs.writeFileSync(d,c);fs.copyFileSync(m,n);console.log('copied client.cjs -> client.js ('+fs.statSync(d).size+' bytes)')\"",
+    "build": "tsc && pnpm run build:client",
+    "build:client": "bash ../node_modules/.bin/tsdown --config tsdown.config.ts && node -e \"const fs=require('node:fs'),p='lib/client.cjs',d='lib/client.js',m=p+'.map',n=d+'.map';let c=fs.readFileSync(p,'utf8');c=c.replace(/# sourceMappingURL=client\\.cjs\\.map/,'# sourceMappingURL=client.js.map');fs.writeFileSync(d,c);fs.copyFileSync(m,n);console.log('copied client.cjs -> client.js ('+fs.statSync(d).size+' bytes)')\"",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
