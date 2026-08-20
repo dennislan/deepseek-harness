@@ -413,7 +413,7 @@ export function apply(_ctx: unknown): void {
     const snap = store.snapshot
 
     if (snap.user !== null) {
-      // Logged in: remove overlay, show floating logout button
+      // Logged in: remove overlay, show sidebar user badge
       if (overlay) { overlay.remove(); overlay = null }
       stopWeChatPoll()
       showLogoutButton(snap.user.displayName)
@@ -543,33 +543,110 @@ export function apply(_ctx: unknown): void {
     })
   }
 
-  // ── Floating logout button (shown when logged in, outside the overlay) ──────
+  // ── Sidebar user badge (shown when logged in, outside the overlay) ──────────
+  // Injects the user name into the sidebar "设定" trigger row so the row reads
+  // [user name][gear icon]. The harness button is React-owned and re-renders on
+  // wide↔rail toggles and sidebar remounts, so a body-level MutationObserver
+  // re-applies the badge and label hiding after any structural change while a
+  // ResizeObserver tracks the rail state. Clicking the name signs out; clicking
+  // the gear opens settings (React keeps the button's own onClick).
 
-  let logoutBtn: HTMLElement | null = null
+  const SETTINGS_TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"]:not([aria-label])'
+  const USER_BADGE_ID = 'dsh-sidebar-user'
+  const RAIL_WIDTH_THRESHOLD = 80
+
+  let sidebarTrigger: HTMLButtonElement | null = null
+  let userBadge: HTMLSpanElement | null = null
+  let sidebarObserver: MutationObserver | null = null
+  let railObserver: ResizeObserver | null = null
+  let currentDisplayName = ''
+  let syncingBadge = false
+
+  function findSettingsTrigger(): HTMLButtonElement | null {
+    return document.querySelector<HTMLButtonElement>(SETTINGS_TRIGGER_SELECTOR)
+  }
+
+  function applyRailState(trigger: HTMLButtonElement): void {
+    const narrow = trigger.getBoundingClientRect().width < RAIL_WIDTH_THRESHOLD
+    if (userBadge && userBadge.parentElement === trigger) {
+      userBadge.classList.toggle('dsh-sidebar-user--hidden', narrow)
+    }
+    // Push the gear to the right edge in wide mode; clear it in rail mode so the
+    // harness's own centered rail layout applies.
+    const gear = trigger.querySelector('svg')
+    if (gear) gear.style.marginLeft = narrow ? '' : 'auto'
+  }
+
+  function syncSidebarBadge(): void {
+    if (syncingBadge) return
+    syncingBadge = true
+    try {
+      const trigger = findSettingsTrigger()
+      if (!trigger) return
+      if (sidebarTrigger !== trigger) {
+        sidebarTrigger = trigger
+        userBadge = null
+        railObserver?.disconnect()
+        railObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => applyRailState(trigger)) : null
+        railObserver?.observe(trigger)
+      }
+      if (!userBadge || userBadge.parentElement !== trigger) {
+        userBadge = trigger.querySelector<HTMLSpanElement>('#' + USER_BADGE_ID)
+        if (!userBadge) {
+          userBadge = document.createElement('span')
+          userBadge.id = USER_BADGE_ID
+          userBadge.title = 'Sign out'
+          userBadge.addEventListener('click', (e: MouseEvent) => {
+            e.preventDefault()
+            e.stopPropagation()
+            if (!confirm('确定要退出登录吗？')) return
+            void logout()
+          })
+          trigger.insertBefore(userBadge, trigger.firstChild)
+        }
+      }
+      if (userBadge.textContent !== currentDisplayName) userBadge.textContent = currentDisplayName
+      for (const span of trigger.querySelectorAll('span')) {
+        if (span !== userBadge && span.style.display !== 'none') span.style.display = 'none'
+      }
+      applyRailState(trigger)
+    } finally {
+      syncingBadge = false
+    }
+  }
+
+  async function logout(): Promise<void> {
+    try { await fetch('/api/auth/logout', { method: 'POST' }) } catch { /* ignore */ }
+    try { localStorage.removeItem('dsh.sessions.current') } catch { /* ignore */ }
+    _cachedUserSessions = null
+    _cachedWorkspaceIds = null
+    store.setState({ user: null, error: null })
+  }
 
   function showLogoutButton(displayName: string): void {
-    if (logoutBtn) return
     injectStyles()
-    logoutBtn = document.createElement('button')
-    logoutBtn.setAttribute('id', 'dsh-floating-logout')
-    logoutBtn.setAttribute('title', 'Sign out')
-    logoutBtn.setAttribute('aria-label', 'Sign out as ' + displayName)
-    logoutBtn.textContent = displayName.charAt(0).toUpperCase()
-    logoutBtn.addEventListener('click', () => {
-      if (!confirm('确定要退出登录吗？')) return
-      void (async () => {
-        try { await fetch('/api/auth/logout', { method: 'POST' }) } catch { /* ignore */ }
-        try { localStorage.removeItem('dsh.sessions.current') } catch { /* ignore */ }
-        _cachedUserSessions = null
-        _cachedWorkspaceIds = null
-        store.setState({ user: null, error: null })
-      })()
-    })
-    document.body.appendChild(logoutBtn)
+    currentDisplayName = displayName
+    if (!sidebarObserver) {
+      sidebarObserver = new MutationObserver(() => syncSidebarBadge())
+      sidebarObserver.observe(document.body, { childList: true, subtree: true })
+    }
+    syncSidebarBadge()
   }
 
   function hideLogoutButton(): void {
-    if (logoutBtn) { logoutBtn.remove(); logoutBtn = null }
+    sidebarObserver?.disconnect()
+    sidebarObserver = null
+    railObserver?.disconnect()
+    railObserver = null
+    if (sidebarTrigger) {
+      for (const span of sidebarTrigger.querySelectorAll('span')) {
+        if (span !== userBadge && span.style.display === 'none') span.style.display = ''
+      }
+      const gear = sidebarTrigger.querySelector('svg')
+      if (gear) gear.style.marginLeft = ''
+    }
+    if (userBadge) { userBadge.remove(); userBadge = null }
+    sidebarTrigger = null
   }
 
   store.subscribe(renderOverlay)
@@ -959,29 +1036,24 @@ const css = `
   align-self: center;
 }
 
-/* ── Floating logout button ─────────────────────────────────────────────── */
-#dsh-floating-logout {
-  position: fixed;
-  top: 14px; right: 18px;
-  z-index: 100000;
-  width: 34px; height: 34px;
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.55);
+/* ── Sidebar user badge (injected into the "设定" trigger row) ───────────── */
+#dsh-sidebar-user {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
+  color: rgba(255,255,255,0.88);
   cursor: pointer;
-  backdrop-filter: blur(12px);
-  transition: border-color 0.18s, color 0.18s, background 0.18s, box-shadow 0.18s;
-  line-height: 1;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.30);
+  user-select: none;
 }
-#dsh-floating-logout:hover {
-  border-color: rgba(103,158,254,0.55);
-  color: rgba(255,255,255,0.90);
-  background: rgba(103,158,254,0.15);
-  box-shadow: 0 2px 20px rgba(103,158,254,0.20);
+#dsh-sidebar-user:hover {
+  color: #679efe;
+}
+#dsh-sidebar-user.dsh-sidebar-user--hidden {
+  display: none;
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
