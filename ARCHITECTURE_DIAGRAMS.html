@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeepSeek Harness 架构可视化图表</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });</script>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+         background: #0d1117; color: #e6edf3; margin: 0; padding: 32px; line-height: 1.7; }
+  h1 { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 12px; }
+  h2 { color: #79c0ff; margin-top: 40px; }
+  .cap { color: #8b949e; font-size: 14px; margin: 8px 0 20px; }
+  .diagram { background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+             padding: 20px; margin: 16px 0 32px; overflow-x: auto; }
+  pre.mermaid { background: transparent; margin: 0; }
+  code { background: #161b22; padding: 2px 6px; border-radius: 6px; color: #ffa657; }
+  .legend { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 16px 24px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+  th, td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; }
+  th { background: #21262d; color: #58a6ff; }
+</style>
+</head>
+<body>
+<h1>DeepSeek Harness 架构可视化图表</h1>
+<p class="cap">本文是 <code>TECHNICAL_REPORT_zh.md</code> 第 13 章的浏览器渲染镜像。所有图均依据源码核实（<code>vendor/cordis/src/*</code>、<code>packages/core/*</code>、<code>packages/boot/app-boot/*</code>），命名与报告全文一致。</p>
+
+<h2>13.1 系统架构总览图</h2>
+<p class="cap">产品 = 一棵 Cordis 插件树：框架内核 → 核心脊柱 → 能力接缝 → 基础设施；用户输入经宿主进入 agentLoop，循环通过 ctx.llm / ctx.tools 调度，每一步都 append 进 ctx.sessions 日志。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+    subgraph HOST["宿主与入口层 (apps/cli · boot/app-boot)"]
+        CLI["dsh CLI / Web Host / ACP Server"]
+        BOOT["profile 组合器: loadProfile + composeEntries + mountRootInclude"]
+        CLI --> BOOT
+    end
+    subgraph FRAME["Cordis 框架内核 (vendor/, 改名 @deepseek-ai)"]
+        CTX["Context (Proxy 服务仓库)"]
+        SVC["Service / ReflectService: provide / inject / notify"]
+        FIB["Fiber (插件激活实例, 状态机)"]
+        EVT["Typed Events: emit/waterfall/parallel/serial/bail"]
+        EFF["Effect (可逆注册, LIFO 回滚)"]
+        CTX --- SVC
+        SVC --- FIB
+        FIB --- EFF
+        EVT --- FIB
+    end
+    subgraph CORE["核心脊柱 (packages/core)"]
+        SESS["ctx.sessions (SessionEvent 事件溯源)"]
+        SP["ctx.systemPrompt (prompt 段落装配)"]
+        TOOLS["ctx.tools (作用域工具注册表 + 执行管道)"]
+        AGENTS["ctx.agents (Agent 注册表 + agent/* 事件)"]
+        LOOP["ctx.agentLoop (ReactLoopAgent 驱动)"]
+        SCOPE["scope 原语 (每 agent 作用域 ctx)"]
+        LOOP -.实现 Agent 接口.- AGENTS
+        AGENTS --- SCOPE
+    end
+    subgraph SEAM["能力接缝 (Definition / Provider / Consumer)"]
+        LLM["ctx.llm + LlmAdapter (流式)"]
+        SHELL["ctx.shell + bash provider"]
+        FS["ctx.fs + provider"]
+        SUB["ctx.subprocess"]
+        WEB["ctx.web + search/fetch"]
+        SKILLS["ctx.skills + catalog"]
+        SHELL --> SUB
+    end
+    subgraph INFRA["基础设施与数据平面"]
+        PERSIST["session-persistence (JSONL / SQLite, SCHEMA_VERSION)"]
+        HOOKS["hooks 线协议 (Claude Code / Codex)"]
+        SDK["sdk / JSON-RPC (进程外运行时)"]
+        ACP["acp 服务器 (自动化)"]
+        PRESET["preset (per-session agent 组合)"]
+        INTER["interaction (commands / approval)"]
+    end
+    BOOT --> CTX
+    BOOT -.实例化插件.-> FIB
+    LOOP --> LLM
+    LOOP --> TOOLS
+    TOOLS --> SHELL
+    TOOLS --> FS
+    TOOLS --> WEB
+    TOOLS --> SKILLS
+    LOOP --> SP
+    SESS --> PERSIST
+    AGENTS --> PRESET
+    AGENTS --> INTER
+    HOOKS -.桥接拦截点.-> EVT
+    SDK -.暴露.- AGENTS
+    ACP -.暴露.- AGENTS
+    USER["用户 / 自动化客户端"] --> CLI
+    SESS -.append-only 日志驱动.- LOOP
+</pre></div>
+
+<h2>13.2 插件生命周期状态机</h2>
+<p class="cap">一个插件 = 一个 Fiber。依赖延迟激活：inject 齐了才 LOADING→ACTIVE；依赖消失回落 PENDING；dispose 逆序回滚进 DISPOSED；apply 抛错进 FAILED。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    S(["START"]) --> PENDING["PENDING: ctx.plugin() / Loader 挂载 entry"]
+    PENDING --> LOADING["LOADING: _setEpoch 由 INACTIVE 翻为 active (全部 inject 服务已 provide)"]
+    LOADING --> ACTIVE["ACTIVE: apply(ctx, config) 执行, 注册 effects / services"]
+    LOADING -.->|apply 或 effect 抛错| FAILED["FAILED: (_error 已记录)"]
+    ACTIVE --> UNLOADING["UNLOADING: ctx.dispose() 或 inject 服务被移除 (ReflectService.notify)"]
+    ACTIVE -.->|依赖服务临时消失| PENDING
+    UNLOADING --> DISPOSED["DISPOSED: _disposables 逆序 (LIFO) 回滚, 监听器注销, effect 撤销"]
+    FAILED --> DISPOSED
+    DISPOSED --> E["END"]
+    style PENDING fill:#1f6feb22,stroke:#1f6feb
+    style ACTIVE fill:#3fb95022,stroke:#3fb950
+    style FAILED fill:#f8514922,stroke:#f85149
+    style DISPOSED fill:#8b949e22,stroke:#8b949e
+</pre></div>
+
+<h2>13.3 配置加载与 Profile/Bundle 分层流程图</h2>
+<p class="cap">dsh --profile 按 bundles 顺序逐层取 patch；叶子 cordis.yml 恒空，整棵树都是 patch；assertEntriesActivated 检查 pending entry 缺失服务则启动失败。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    START["dsh --profile 名称 任务"] --> PARSE["解析命令行: --profile / --patch / --dump-config"]
+    PARSE --> LOAD["loadProfile(): 读 profile.manifest.dsh.profile.bundles 数组"]
+    LOAD --> B1["按 bundles 顺序载入各 bundle 的 cordis.patch.yml (dsh.bundle.patch)"]
+    B1 --> B2["叠加 profile 自身 cordis.patch.yml"]
+    B2 --> B3["叠加 家目录 cordis.patch.yml (优先级高于 profile)"]
+    B3 --> B4["叠加 --patch 文件 + telemetry 开关"]
+    B4 --> COMP["composeEntries(): applyEntryPatches(空根, 各层)<br/>得到根 entry 列表 (叶子 cordis.yml 恒为空)"]
+    COMP --> MOUNT["mountRootInclude(): 实例化每个 entry 为插件, 解析 inject, 激活 Fiber"]
+    MOUNT --> ASSERT{"assertEntriesActivated()<br/>存在 pending entry?"}
+    ASSERT -->|是, inject 未满足| ERR["启动失败: 报告缺失的 ctx.〈key〉 服务"]
+    ASSERT -->|否| DUMP{"指定 --dump-config ?"}
+    DUMP -->|是| OUT["renderConfigDump(): 重放 patches 打印 (带来源注释)"]
+    DUMP -->|否| RUN["boot 运行时, 进入 Agent 循环"]
+    OUT --> STOP["退出 (仅打印, 不启动)"]
+    RUN --> DONE["运行时"]
+</pre></div>
+
+<h2>13.4 插件与宿主运行时序图</h2>
+<p class="cap">插件被挂载后解析 inject、依赖齐则 apply；所有 effect 压入 _disposables（可逆 LIFO）；事件同步派发，调 ctx.<key> 可能 await；dispose 逆序回滚。</p>
+<div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Host as 宿主 (CLI / boot)
+    participant Loader as Loader
+    participant Fiber as Fiber (插件激活)
+    participant Reflect as ReflectService
+    participant Plug as 插件 apply(ctx)
+    participant Prov as 其他 Provider (ctx.〈key〉)
+    Host->>Loader: 挂载 cordis.yml entry
+    Loader->>Fiber: ctx.plugin(plugin, config)
+    Note over Fiber: state = PENDING, 解析 inject 依赖
+    loop 对每个 inject 服务
+        Fiber->>Reflect: 查询 store 中是否已 provide
+        Reflect-->>Fiber: 命中 uid / 未命中
+    end
+    alt 全部依赖就绪
+        Fiber->>Fiber: _setEpoch(active) -> _reload()
+        Fiber->>Plug: 调用 apply(ctx, config)
+        Plug->>Fiber: ctx.effect(fn) / ctx.on(evt, cb)
+        Note over Plug,Fiber: 每个 effect 压入 _disposables (可逆, LIFO 回滚)
+        Plug->>Reflect: ctx.〈key〉.provide(value) 注册服务
+        Fiber->>Fiber: state = ACTIVE
+    else 依赖未齐
+        Note over Fiber: 保持 PENDING, 等待被 notify 后重新 _refresh
+    end
+    par 运行时通信
+        Prov-->>Plug: 事件经 ctx.emit / ctx.waterfall 派发 (同步)
+        Plug->>Prov: 调用 ctx.〈key〉 使用能力 (可能 await)
+    end
+    Host->>Fiber: ctx.dispose() 或依赖被移除
+    Fiber->>Fiber: _unload(): _disposables 逆序回滚
+    Note over Plug,Fiber: 监听器注销, effect 撤销, store 清空
+    Fiber->>Fiber: state = DISPOSED
+    Note over Fiber: 边界: apply 抛错 -> FAILED, 部分 effect 仍回滚后上报
+</pre></div>
+
+<h2>13.5 一次 Turn/Step 的运行时序图</h2>
+<p class="cap">用户 send→inbox；循环 claim 输入→assemble→agent/pre-step→从日志派生历史→llm.stream→工具循环(tools/* waterfall)→turn-stopping→turn/end；每步落 SessionEvent。</p>
+<div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as 用户 / 客户端
+    participant Inbox as agent.inbox
+    participant Cycle as ReactLoopAgent (ctx.agentLoop)
+    participant SP as ctx.systemPrompt
+    participant Sess as ctx.sessions (日志)
+    participant LLM as ctx.llm (stream)
+    participant Tools as ctx.tools (管道)
+    participant Prov as shell/fs/subprocess Provider
+    participant Persist as session-persistence
+    U->>Inbox: send / followup (next-turn / next-step)
+    Note over Inbox: 耐久 agent/inbox/spliced 事件
+    Cycle->>Cycle: kick() -> while(turn())
+    Cycle->>Sess: append turn/start
+    Cycle->>Inbox: preStep(): claim() 下一步输入
+    Cycle->>SP: assemble() 装配 prompt 段落 + tool schemas
+    SP-->>Cycle: agent/pre-step (waterfall): reject | enter(msgs)
+    Cycle->>Sess: append step/start
+    Cycle->>Sess: append user/message (entered)
+    Cycle->>Sess: deriveMessages() 从日志派生模型历史
+    Cycle->>LLM: agent/request (waterfall) -> llm.prepareCall + stream(req)
+    loop 每个流式 chunk
+        LLM-->>Sess: append assistant/chunk
+    end
+    LLM-->>Sess: assemble assistant/message
+    alt 模型返回 tool calls
+        Cycle->>Tools: executeToolCalls()
+        loop 每个工具调用
+            Cycle->>Sess: append tool/call
+            Tools->>Tools: tools/pre-execute (waterfall: allow|deny|ask)
+            Tools->>Tools: guard(reason) 单调降权
+            Tools->>Tools: tools/execute (waterfall) -> execute(args)
+            Tools->>Prov: 实际能力执行 (shell/fs/subprocess)
+            Prov-->>Tools: ShellRunResult / FileResult
+            Tools->>Tools: tools/post-execute (waterfall)
+            Cycle->>Sess: append tool/result (冻结不可变)
+        end
+        Note over Cycle: 还需下一步? (tool result 的 concludesTurn?)
+        Cycle->>Inbox: claim() 下一 step 输入 -> 回到 step/start
+    else 无工具调用 / turn 结束
+        Cycle->>Cycle: agent/turn-stopping (serial)
+        Cycle->>Sess: append turn/end
+    end
+    Sess->>Persist: 追加 SessionEvent (JSONL / SQLite)
+    Note over Cycle,Persist: 错误分支: agent/request-error (waterfall) -> retry | fail -> agent/error (emit)
+</pre></div>
+
+<h2>13.6 工具受保护执行管道</h2>
+<p class="cap">pre-execute(waterfall: allow|deny|ask) → guard(单调降权) → execute(waterfall) → Provider → post-execute(waterfall) → finalizeContent → emit tools/result(冻结)。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    CALL["模型发起工具调用"] --> TC["append tool/call"]
+    TC --> PRE{"tools/pre-execute (waterfall)"}
+    PRE -->|allow| G["guard(reason) 单调降权"]
+    PRE -->|deny| DENY["拒绝 -> tool/result Failure"]
+    PRE -->|ask| APPROVE{"approval/request (human)"}
+    APPROVE -->|allowed-once| G
+    APPROVE -->|rejected / cancelled| DENY
+    G --> EXE{"tools/execute (waterfall: 超时/重试/指标)"}
+    EXE --> BODY["工具主体 execute(args, exec)"]
+    BODY --> PROV["调用 Provider (ctx.shell / ctx.fs / ctx.subprocess / ctx.web)"]
+    PROV -->|成功| OK["tool/result Success (concludesTurn / additionalContexts)"]
+    PROV -->|基础设施失败 reject| FAIL["tool/result Failure"]
+    OK --> POST["tools/post-execute (waterfall): 接受/替换/丰富/拦截"]
+    FAIL --> POST
+    POST --> FINAL["finalizeContent 内容投影"]
+    FINAL --> RES["emit tools/result (冻结不可变)"]
+    DENY --> RES
+    RES --> END["回到 Agent 循环判定下一步"]
+</pre></div>
+
+<h2>13.7 插件依赖关系图</h2>
+<p class="cap">接缝三件套视角：蓝=Definition(定义 ctx.key)、绿=Provider(实现并 provide)、黄=Consumer(面向模型工具)。Shell 经 ctx.subprocess 派生；agent-loop 实现 agent 接口。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    DEF_SHELL["dsh-shell<br/>定义 ctx.shell"]
+    DEF_LLM["dsh-llm<br/>定义 ctx.llm"]
+    DEF_FS["dsh-fs<br/>定义 ctx.fs"]
+    DEF_TOOLS["dsh-tools<br/>定义 ctx.tools"]
+    DEF_AGENTS["dsh-agent<br/>定义 ctx.agents"]
+    DEF_LOOP["dsh-agent-loop<br/>实现 ctx.agentLoop"]
+    DEF_SUB["dsh-subprocess<br/>定义 ctx.subprocess"]
+    PROV_BASH["dsh-bash-local<br/>dsh-bash-sandbox"]
+    PROV_ADAPT["deepseek / pi-ai<br/>adapter"]
+    PROV_FSP["dsh-fs-local"]
+    PROV_SUB["dsh-subprocess-local"]
+    CONS_BASH["dsh-tool-bash"]
+    CONS_FS["dsh-tool-fs"]
+    CONS_WEB["dsh-tool-web"]
+    CONS_SKILL["dsh-tool-skill"]
+    DEF_SHELL ==>|provide| PROV_BASH
+    PROV_BASH ==>|provide ctx.shell| CONS_BASH
+    PROV_BASH -->|经 ctx.subprocess 派生| PROV_SUB
+    DEF_SUB ==>|provide| PROV_SUB
+    DEF_LLM ==>|registerAdapter| PROV_ADAPT
+    PROV_ADAPT ==>|provide ctx.llm| CONS_BASH
+    DEF_FS ==>|provide| PROV_FSP
+    PROV_FSP ==>|provide ctx.fs| CONS_FS
+    DEF_TOOLS ==>|provide ctx.tools| CONS_BASH
+    DEF_TOOLS ==>|provide ctx.tools| CONS_FS
+    DEF_TOOLS ==>|provide ctx.tools| CONS_WEB
+    DEF_TOOLS ==>|provide ctx.tools| CONS_SKILL
+    DEF_AGENTS ==>|定义接口| DEF_LOOP
+    DEF_LOOP -->|实现 Agent| DEF_AGENTS
+    classDef def fill:#e8f0fe,stroke:#4285f4;
+    classDef prov fill:#e6f4ea,stroke:#34a853;
+    classDef cons fill:#fef7e0,stroke:#fbbc04;
+    class DEF_SHELL,DEF_LLM,DEF_FS,DEF_TOOLS,DEF_AGENTS,DEF_LOOP,DEF_SUB def;
+    class PROV_BASH,PROV_ADAPT,PROV_FSP,PROV_SUB prov;
+    class CONS_BASH,CONS_FS,CONS_WEB,CONS_SKILL cons;
+</pre></div>
+
+<h2>13.8 事件通信机制图</h2>
+<p class="cap">插件通信统一原语 = Typed Events（五种模式）。emit 同步观察；waterfall 外层先执行、next 委托、不调则短路；parallel/serial 异步；bail 同步短路。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+    COMM["插件通信: Typed Events<br/>declare module 声明合并 (Events 接口)"] --> Q{"选择分发模式"}
+    Q -->|观察, 不关心返回| EMIT["emit<br/>同步, 注册序, fire-and-forget<br/>ex: session/event, tools/result"]
+    Q -->|包裹 / 改写请求| WF["waterfall<br/>同步, 外层先执行<br/>next() 委托, 不调则短路<br/>ex: agent/pre-step, llm/stream"]
+    Q -->|扇出多监听| PAR["parallel<br/>异步 await 全部<br/>ex: 批量观察"]
+    Q -->|有序裁决| SER["serial<br/>异步, 注册序<br/>遇 bail 停止<br/>ex: agent/turn-stopping"]
+    Q -->|同步短路| BAIL["bail<br/>同步, 首个非 null/false/undefined 即返回<br/>ex: 快速否决"]
+    EMIT --> R["派发完成"]
+    WF --> R
+    PAR --> R
+    SER --> R
+    BAIL --> R
+</pre></div>
+
+<h2>13.9 图例与阅读指引</h2>
+<div class="legend">
+<table>
+<tr><th>图</th><th>回答的问题</th><th>对应章节</th></tr>
+<tr><td>13.1 架构总览</td><td>整体由哪些层/模块组成，数据怎么流</td><td>第 1–2、12 章</td></tr>
+<tr><td>13.2 生命周期状态机</td><td>插件从挂到卸经历哪些状态、触发条件</td><td>第 3.2–3.3 章</td></tr>
+<tr><td>13.3 配置分层流程</td><td>dsh --profile 如何拼出插件树</td><td>第 4 章</td></tr>
+<tr><td>13.4 插件↔宿主时序</td><td>插件与框架如何交互、同步/异步在哪</td><td>第 3 章</td></tr>
+<tr><td>13.5 Turn/Step 时序</td><td>一次请求在循环里怎么走</td><td>第 5–6 章</td></tr>
+<tr><td>13.6 工具管道</td><td>工具调用如何被保护地执行</td><td>第 8 章</td></tr>
+<tr><td>13.7 依赖关系</td><td>包级 Definition/Provider/Consumer 依赖</td><td>第 7 章</td></tr>
+<tr><td>13.8 通信机制</td><td>插件用什么模式互发事件</td><td>第 3.4 章</td></tr>
+</table>
+<p style="margin-top:16px"><strong>统一术语</strong>：<code>ctx.&lt;key&gt;</code>（sessions/systemPrompt/tools/agents/agentLoop/llm/shell/fs/subprocess/web/skills/credentials/settings）；<code>FiberState</code>（PENDING/LOADING/ACTIVE/FAILED/DISPOSED/UNLOADING）；事件分发（emit/waterfall/parallel/serial/bail）；核心不变量：<strong>模型可见 = 已记录</strong>。</p>
+</div>
+</body>
+</html>
