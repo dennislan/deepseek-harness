@@ -7,7 +7,7 @@ OAuth / login plugin for DeepSeek Harness. 支持用户名密码登录和企业�
 - **用户名密码登录** — 调用远程 auth API 验证，通过后进入主界面。
 - **企业微信扫码登录** — 生成 QR 码，轮询扫码状态，确认后完成登录。
 - **模式切换** — 表单右上角 WeChat / 账号图标可切换两种登录方式。
-- **会话按用户隔离** — 认证后新建的会话自动关联当前 userId，持久化到 `$DSH_HOME/.oauth-sessions.json`。
+- **会话与工作区按用户隔离** — 认证后新建的会话与所选工作区自动关联当前 userId 并持久化；服务端与客户端双层过滤，未登录用户看不到任何会话或工作区。
 - **高品质登录 UI** — 全屏分割布局：左侧动态渐变品牌面板，右侧简洁表单卡片。
 
 ## 安装
@@ -32,10 +32,6 @@ dsh plugin --profile web add dsh-oauth
     apiUrl: 'http://localhost:3000/api/auth'
     wechatEnabled: true
     wechatApiUrl: 'https://open.weixin.qq.com/connect'
-
-# 启用登录 UI 覆盖层
-- id: dsh-oauth-client
-  disabled: false
 ```
 
 ## 登录 UI
@@ -170,13 +166,33 @@ dsh plugin --profile web add dsh-oauth
 { "ok": true, "user": { "id": "…", "displayName": "…", "token": "…" } }
 ```
 
-## 会话隔离
+## 会话与工作区隔离
 
-用户认证后新建会话时，host 插件自动将 `sessionId → userId` 写入持久化映射文件（默认 `$DSH_HOME/.oauth-sessions.json`）。通过 `auth.getSessionsForUser(userId)` 可按用户过滤会话。
+登录后新建的会话自动将 `sessionId → userId` 写入 `$DSH_HOME/.oauth-sessions.json`，所选工作区（通过 `workspace.create` 建立或复用）自动将 `workspaceId → userId` 写入 `$DSH_HOME/.oauth-workspaces.json`；当前用户身份持久化到 `$DSH_HOME/oauth-user.json`，重启后免登录。三个文件均为普通覆盖写，切换用户后新身份覆盖旧身份。
+
+隔离在两层强制：
+
+- **服务端** — 插件以 exact route 覆盖 `/api/workspace.list`、`/api/workspace.create`、`/api/session.list` 与 `/api/session.history`：工作区列表按「用户拥有该工作区，或其中至少一个会话属于该用户」保留，共享工作区只返回用户自己的会话 id；会话列表只返回该用户的会话；历史读取非本人会话时按 `session-not-found` 应答（存在性不泄露）；未认证调用者一律返回空列表。`session.search` 基于 `session.list` 的可见性集合授权，随列表过滤自动隔离。
+- **客户端** — 覆盖全局 `fetch` 镜像服务端过滤，避免侧边栏渲染其他用户的会话与工作区。
 
 ## 不修改 deepseek-harness 源码
 
 本插件完全独立于 harness 仓库。通过标准 Cordis bundle 机制加载——只需在 profile 中启用即可，无需改动任何 harness 代码。
+
+## 非官方扩展点
+
+插件依赖以下 harness 未公开承诺的扩展点，升级 harness 后需验证兼容性：
+
+- **exact route 覆盖** — host 以 exact route 注册 `/api/workspace.list`、`/api/workspace.create`、`/api/session.list` 与 `/api/session.history`，覆盖内置 handler 实现隔离。harness 未提供按用户过滤的官方接口，这是当前唯一的服务端隔离手段。
+- **`window.fetch` 拦截** — 客户端覆盖全局 `fetch`，镜像服务端过滤 `/api/session.list` 与 `/api/workspace.list` 的响应，避免侧边栏渲染未授权内容。
+- **`document.body` 注入** — 登录遮罩与登出按钮直接追加到 `document.body`，未经官方 UI 插槽协议注册。
+
+若 harness 后续提供官方按用户过滤 API 或 UI 扩展点，本插件将优先迁移，不再依赖上述非官方机制。
+
+## 已知限制
+
+- 状态文件由单进程独占（`$DSH_HOME/` 下三个 JSON），多个 harness 进程共享同一 `$DSH_HOME` 时写入互相覆盖，未做进程间协调。
+- 除 `session.history` 外，其余直接指定 `sessionId` 的深层会话接口未做服务端守卫；客户端侧边栏已过滤，绕过 UI 的手工调用仍可读取这些接口。
 
 ## License
 
