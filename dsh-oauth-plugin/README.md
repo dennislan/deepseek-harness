@@ -1,11 +1,11 @@
 # dsh-oauth
 
-OAuth / login plugin for DeepSeek Harness. 支持用户名密码登录和企业微信（WeCom）扫码登录，会话按用户隔离。
+OAuth / login plugin for DeepSeek Harness. 支持用户名密码登录和微信网站应用（WeChat Website App）扫码登录，会话按用户隔离。
 
 ## 特性
 
 - **用户名密码登录** — 调用远程 auth API 验证，通过后进入主界面。
-- **企业微信扫码登录** — 生成 QR 码，轮询扫码状态，确认后完成登录。
+- **微信网站应用扫码登录** — 按微信官方 OAuth2.0 流程：加载官方 `wxLogin.js` 渲染二维码，扫码确认后由微信回调完成登录。
 - **模式切换** — 表单右上角 WeChat / 账号图标可切换两种登录方式。
 - **会话与工作区按用户隔离** — 认证后新建的会话与所选工作区自动关联当前 userId 并持久化；服务端与客户端双层过滤，未登录用户看不到任何会话或工作区。
 - **高品质登录 UI** — 全屏分割布局：左侧动态渐变品牌面板，右侧简洁表单卡片。
@@ -26,14 +26,23 @@ dsh plugin --profile web add dsh-oauth
 在 `~/.dsh/profiles/web/cordis.patch.yml` 中启用：
 
 ```yaml
-# 启用密码登录 + 可选的企业微信 QR 登录
+# 启用密码登录 + 微信网站应用扫码登录
 - id: dsh-oauth-host
   disabled: false
   config:
     apiUrl: 'http://localhost:3000/api/auth'
     wechatEnabled: true
-    wechatApiUrl: 'https://open.weixin.qq.com/connect'
+    wechatAppId: 'wx...'           # 微信开放平台 网站应用 AppID
+    wechatAppSecret: '...'         # 微信开放平台 AppSecret（仅服务端使用）
+    wechatRedirectUri: 'http://127.0.0.1:3080/api/auth/wechat/callback'
+    wechatStateTtlMs: 600000       # 一次性 state 有效期，默认 10 分钟
 ```
+
+微信扫码登录要求：
+
+1. 在[微信开放平台](https://open.weixin.qq.com/)注册**网站应用**，获取 `AppID` / `AppSecret`。
+2. 将 `wechatRedirectUri` 的域名加入该应用的**授权回调域**（开发时可填 `127.0.0.1`）。
+3. 填入上述配置后重启 harness；登录 UI 的微信模式会加载官方 `wxLogin.js` 渲染二维码。
 
 ## 登录 UI
 
@@ -66,12 +75,15 @@ dsh plugin --profile web add dsh-oauth
 
 ### 微信 QR 模式
 
-1. 客户端生成随机 `flowId`（UUID v4）。
-2. `POST /api/auth/wechat-qr` 返回 QR 图片 URL。
-3. QR 渲染在圆角边框容器中。
-4. 每 2 秒客户端轮询 `GET /api/auth/wechat-status?flowId=…`。
-5. 状态变为 `confirmed` 时客户端调用 `POST /api/auth/wechat-login` 完成登录。
-6. QR 过期时自动刷新新 flow。
+按微信官方网站应用 OAuth2.0 `authorization_code` 流程：
+
+1. 客户端请求 `GET /api/auth/wechat/config`，服务端生成一次性 `state` 并返回 `appId`、`redirectUri`、`scope`。
+2. 客户端动态加载官方 `wxLogin.js`，以 `new WxLogin(...)` 在容器中渲染微信官方二维码 iframe。
+3. 用户扫码确认后，微信将 `code` + `state` 重定向到 `redirectUri`（即 `/api/auth/wechat/callback`）。
+4. 服务端校验 `state`（一次性、防 CSRF、到期作废），用 `code` 向微信换取 `access_token` 与用户信息。
+5. 回调页通过 `postMessage` 把登录结果告知登录遮罩，页面随即刷新进入主界面。
+
+失败或过期时回调页同样通过 `postMessage` 回报错误，遮罩展示错误并允许重新扫码。
 
 ## 配置项
 
@@ -82,11 +94,11 @@ dsh plugin --profile web add dsh-oauth
 | `mePath` | `/me` | 验证当前用户路径 |
 | `logoutPath` | `/logout` | 登出路径 |
 | `sessionMapFile` | `.oauth-sessions.json` | 会话↔用户映射的持久化文件名（位于 `$DSH_HOME/`） |
-| `wechatEnabled` | `false` | 是否启用企业微信 QR 登录 |
-| `wechatApiUrl` | `''` | 企业微信 auth API 基址（启用时需要） |
-| `wechatQrPath` | `/wechat/qr` | QR 生成 POST 路径 |
-| `wechatStatusPath` | `/wechat/status` | 状态轮询 GET 路径 |
-| `wechatLoginPath` | `/wechat/login` | code 交换 POST 路径 |
+| `wechatEnabled` | `false` | 是否启用微信网站应用扫码登录 |
+| `wechatAppId` | `''` | 微信开放平台网站应用 AppID（启用时需要） |
+| `wechatAppSecret` | `''` | 微信开放平台 AppSecret（仅服务端使用，绝不出现在前端） |
+| `wechatRedirectUri` | `''` | 微信 OAuth 回调地址，需在开放平台配置为授权回调域 |
+| `wechatStateTtlMs` | `600000` | 一次性 `state` 有效期（毫秒） |
 
 ## 远程 API 契约
 
@@ -120,52 +132,29 @@ dsh plugin --profile web add dsh-oauth
 
 **`POST {apiUrl}{logoutPath}`** → `{ "ok": true }`
 
-### 企业微信 QR
+### 微信 OAuth 引导
 
-**`POST {wechatApiUrl}{wechatQrPath}`**
+**`GET {origin}/api/auth/wechat/config`**
 
-请求：
-```json
-{ "flowId": "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx" }
-```
+无参。服务端生成一次性 `state`（有效期 `wechatStateTtlMs`，默认 10 分钟）并返回：
 
-成功（200）：
 ```json
 {
-  "ok": true,
-  "qr": {
-    "flowId": "…",
-    "qrUrl": "https://example.com/qr.png",
-    "qrContent": "wxquota://…",
-    "ttlSeconds": 300
-  }
+  "enabled": true,
+  "appId": "wx…",
+  "redirectUri": "http://127.0.0.1:3080/api/auth/wechat/callback",
+  "state": "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx",
+  "scope": "snsapi_login"
 }
 ```
 
-**`GET {wechatApiUrl}{wechatStatusPath}?flowId=…`**
+`enabled: false` 表示未配置微信登录，客户端应隐藏微信模式。
 
-响应：
-```json
-{
-  "status": "waiting",
-  "user": { "id": "…", "displayName": "…", "token": "…" },
-  "message": "…"
-}
-```
+### 微信 OAuth 回调
 
-`status` 枚举：`waiting` | `scanned` | `confirmed` | `expired` | `error`
+**`GET {origin}/api/auth/wechat/callback?code=…&state=…`**
 
-**`POST {wechatApiUrl}{wechatLoginPath}`**
-
-请求：
-```json
-{ "flowId": "…", "code": "…" }
-```
-
-成功（200）：
-```json
-{ "ok": true, "user": { "id": "…", "displayName": "…", "token": "…" } }
-```
+微信扫码确认后重定向至此。服务端校验 `state`（不存在/已用/过期均拒绝）后用 `code` 向微信换取 `access_token` 与用户信息，并写入本地会话。回调返回一个 HTML 页面，通过 `postMessage({ type: 'dsh-wechat-login', user })` 把结果告知登录遮罩窗口；失败时 `postMessage({ type: 'dsh-wechat-login', error })`。
 
 ## 会话与工作区隔离
 

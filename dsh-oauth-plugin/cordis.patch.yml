@@ -10,8 +10,11 @@
 #     disabled: false
 #     config:
 #       apiUrl: 'https://auth.example.com'
-#       wechatEnabled: true        # optional
-#       wechatApiUrl: 'https://open.weixin.qq.com/connect'
+#       wechatEnabled: true              # optional; official WeChat Website-App OAuth
+#       wechatAppId: 'wx...'             # 开放平台 网站应用 AppID
+#       wechatAppSecret: '...'           # 开放平台 AppSecret (服务端专用, 绝不出现在前端)
+#       wechatRedirectUri: 'http://127.0.0.1:3080/api/auth/wechat/callback'  # 需在开放平台配置为授权回调域
+#       wechatStateTtlMs: 600000         # 一次性 state 有效期 (默认 10 分钟)
 
 - insert:
     - id: dsh-oauth-host

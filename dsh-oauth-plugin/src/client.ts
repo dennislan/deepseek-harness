@@ -3,7 +3,10 @@
  *
  * Premium split-screen login experience with two modes:
  *  - **Password** — username/password form → POST /api/auth/login
- *  - **WeChat Enterprise QR** — shows a QR code, polls status → POST /api/auth/wechat-login
+ *  - **WeChat Website App scan login** — official OAuth2 flow: the client loads
+ *    wxLogin.js from res.wx.qq.com, gets a one-time state from the server, and
+ *    shows WeChat's official QR iframe; the callback page (running inside the
+ *    iframe) reports the result to the parent via postMessage.
  *
  * Mode is toggled by a WeChat / Account icon in the top-right corner of the
  * form panel. The left panel carries the brand identity with an animated mesh.
@@ -13,16 +16,12 @@
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type WeChatStatus = 'waiting' | 'scanned' | 'confirmed' | 'expired' | 'error'
-
 interface AuthState {
   user: { id: string; displayName: string } | null
   loading: boolean
   error: string | null
   mode: 'password' | 'wechat'
-  wechatFlowId: string | null
-  wechatStatus: WeChatStatus | null
-  wechatQrUrl: string | null
+  wechatReady: boolean
   wechatError: string | null
 }
 
@@ -38,9 +37,7 @@ function createAuthStore(): AuthStore {
     loading: false,
     error: null,
     mode: 'password',
-    wechatFlowId: null,
-    wechatStatus: null,
-    wechatQrUrl: null,
+    wechatReady: false,
     wechatError: null,
   }
   const listeners = new Set<() => void>()
@@ -72,11 +69,14 @@ const ICON_ACCOUNT = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function generateFlowId(): string {
-  if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) return (crypto as any).randomUUID()
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+function loadWxLogin(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).WxLogin) { resolve(); return }
+    const script = document.createElement('script')
+    script.src = 'https://res.wx.qq.com/connect/zh_CN/htmledition/js/wxLogin.js'
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Failed to load wxLogin.js'))
+    document.head.appendChild(script)
   })
 }
 
@@ -85,7 +85,6 @@ function generateFlowId(): string {
 export function apply(_ctx: unknown): void {
   const store = createAuthStore()
   let overlay: HTMLElement | null = null
-  let wechatPollId: number | null = null
 
   // ── Fetch interception: filter session.list by current user ──────────────
   // The harness does not expose per-user session filtering, so the client
@@ -237,38 +236,21 @@ export function apply(_ctx: unknown): void {
     }
   }
 
-  function stopWeChatPoll(): void {
-    if (wechatPollId !== null) { clearInterval(wechatPollId); wechatPollId = null }
+  // ── WeChat callback bridge ────────────────────────────────────────────────
+  // The official QR iframe (wxLogin.js) redirects to the callback page after
+  // scan-confirm; the callback posts the user to this window via postMessage.
+  const onWeChatMessage = (event: MessageEvent): void => {
+    if (event.origin !== window.location.origin) return
+    const data = event.data as { type?: string; user?: { id: string; displayName: string } } | null
+    if (!data || data.type !== 'dsh-wechat-login' || !data.user) return
+    store.setState({ user: { id: data.user.id, displayName: data.user.displayName }, error: null })
+    try { localStorage.removeItem('dsh.sessions.current') } catch { /* ignore */ }
+    void refreshSessionCache()
+    window.location.reload()
   }
-
-  function startWeChatPoll(flowId: string): void {
-    stopWeChatPoll()
-    wechatPollId = window.setInterval(async () => {
-      try {
-        const res = await fetch(`/api/auth/wechat-status?flowId=${encodeURIComponent(flowId)}`)
-        if (!res.ok) return
-        const data = await res.json() as { status: WeChatStatus; user?: { id: string; displayName: string }; message?: string }
-        store.setState({ wechatStatus: data.status, wechatError: data.message ?? null })
-        if (data.status === 'confirmed' && data.user) {
-          stopWeChatPoll()
-          const loginRes = await fetch('/api/auth/wechat-login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ flowId, code: '' }),
-          })
-          if (loginRes.ok) {
-            const d = await loginRes.json() as { user?: { id: string; displayName: string } }
-            if (d.user) {
-              store.setState({ user: { id: d.user.id, displayName: d.user.displayName } })
-              try { localStorage.removeItem('dsh.sessions.current') } catch { /* ignore */ }
-              void refreshSessionCache()
-              window.location.reload()
-            }
-          }
-        }
-        if (data.status === 'expired' || data.status === 'error') stopWeChatPoll()
-      } catch { /* ignore */ }
-    }, 2000) as unknown as number
+  window.addEventListener('message', onWeChatMessage)
+  if (ctx && typeof ctx.effect === 'function') {
+    ctx.effect(() => () => window.removeEventListener('message', onWeChatMessage), 'oauth-client: wechat-bridge')
   }
 
   // ── Inject shared stylesheet ───────────────────────────────────────────────
@@ -358,7 +340,7 @@ export function apply(_ctx: unknown): void {
               </svg>
               <span>Loading QR…</span>
             </div>
-            <img id="dsh-qr-img" class="dsh-qr-img" src="" alt="WeChat QR code" style="display:none" />
+            <div id="dsh-qr-container" class="dsh-qr-container" style="display:none"></div>
           </div>
           <p id="dsh-wechat-status" class="dsh-qr-status">Waiting for scan</p>
           <p class="dsh-qr-hint">Open WeChat · Scan the code · Confirm to log in</p>
@@ -376,34 +358,38 @@ export function apply(_ctx: unknown): void {
 
   async function initWeChatQr(): Promise<void> {
     if (!overlay) return
-    const flowId = generateFlowId()
-    store.setState({ wechatFlowId: flowId, wechatQrUrl: null, wechatStatus: null, wechatError: null })
+    store.setState({ wechatReady: false, wechatError: null })
 
     const ph = overlay.querySelector('#dsh-qr-placeholder') as HTMLElement
     if (ph) { ph.style.display = 'flex'; ph.textContent = 'Loading QR…' }
-    const img = overlay.querySelector('#dsh-qr-img') as HTMLImageElement | null
-    if (img) img.style.display = 'none'
+    const container = overlay.querySelector('#dsh-qr-container') as HTMLElement
+    if (container) container.style.display = 'none'
 
     try {
-      const res = await fetch('/api/auth/wechat-qr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flowId }),
-      })
-      const data = await res.json() as { ok: boolean; qr?: { qrUrl?: string; qrContent?: string; ttlSeconds?: number }; error?: string }
-      if (!data.ok || !data.qr) {
-        store.setState({ wechatError: data.error ?? 'Failed to get QR' })
-        if (ph) { ph.textContent = 'Failed to load QR. Please try again.' }
+      const res = await fetch('/api/auth/wechat/config')
+      if (!res.ok) throw new Error('Failed to load WeChat config')
+      const cfg = await res.json() as { enabled: boolean; appId: string; redirectUri: string; state: string; scope: string }
+      if (!cfg.enabled || !cfg.appId || !cfg.redirectUri || !cfg.state) {
+        store.setState({ wechatError: 'WeChat login is not configured on the server.' })
+        if (ph) ph.textContent = 'WeChat login unavailable'
         return
       }
-      const qrUrl = data.qr.qrUrl ?? data.qr.qrContent ?? ''
-      store.setState({ wechatQrUrl: qrUrl })
-      if (img && qrUrl) { img.src = qrUrl; img.style.display = 'block' }
+      await loadWxLogin()
+      new (window as any).WxLogin({
+        self_redirect: true,
+        id: 'dsh-qr-container',
+        appid: cfg.appId,
+        scope: cfg.scope,
+        redirect_uri: cfg.redirectUri,
+        state: cfg.state,
+        style: 'white',
+      })
+      store.setState({ wechatReady: true })
       if (ph) ph.style.display = 'none'
-      startWeChatPoll(flowId)
+      if (container) container.style.display = 'block'
     } catch (err) {
-      store.setState({ wechatError: err instanceof Error ? err.message : 'Failed to get QR' })
-      if (ph) ph.textContent = 'Network error. Please try again.'
+      store.setState({ wechatError: err instanceof Error ? err.message : 'Failed to load QR' })
+      if (ph) ph.textContent = 'Failed to load QR. Please try again.'
     }
   }
 
@@ -415,7 +401,6 @@ export function apply(_ctx: unknown): void {
     if (snap.user !== null) {
       // Logged in: remove overlay, show sidebar user badge
       if (overlay) { overlay.remove(); overlay = null }
-      stopWeChatPoll()
       showLogoutButton(snap.user.displayName)
       return
     }
@@ -463,35 +448,11 @@ export function apply(_ctx: unknown): void {
 
     // WeChat QR section
     if (snap.mode === 'wechat') {
-      const img = overlay.querySelector('#dsh-qr-img') as HTMLImageElement | null
       const ph = overlay.querySelector('#dsh-qr-placeholder') as HTMLElement | null
-      const status = overlay.querySelector('#dsh-wechat-status') as HTMLElement | null
-
-      if (snap.wechatFlowId === null && snap.wechatQrUrl === null) {
-        void initWeChatQr()
-      }
-      if (snap.wechatQrUrl !== null && img) {
-        img.style.display = 'block'
-        if (ph) ph.style.display = 'none'
-      } else if (img) {
-        img.style.display = 'none'
-      }
-      if (ph && snap.wechatQrUrl === null) {
-        ph.style.display = 'flex'
-      }
-      if (status) {
-        const st = snap.wechatStatus
-        if (st === 'waiting') status.textContent = 'Waiting for scan'
-        else if (st === 'scanned') status.textContent = 'Scanned · Confirm on your phone'
-        else if (st === 'confirmed') status.textContent = 'Signing in…'
-        else if (st === 'expired') {
-          status.textContent = 'QR expired · Refreshing…'
-          store.setState({ wechatFlowId: null, wechatQrUrl: null, wechatStatus: null })
-          void initWeChatQr()
-        }
-        else if (st === 'error') status.textContent = snap.wechatError ?? 'Error'
-        else status.textContent = 'Waiting for scan'
-      }
+      const container = overlay.querySelector('#dsh-qr-container') as HTMLElement | null
+      if (!snap.wechatReady && !snap.wechatError) void initWeChatQr()
+      if (container) container.style.display = snap.wechatReady ? 'block' : 'none'
+      if (ph) ph.style.display = snap.wechatReady ? 'none' : 'flex'
     }
   }
 
@@ -501,8 +462,7 @@ export function apply(_ctx: unknown): void {
     // Mode toggle
     root.querySelector('#dsh-mode-toggle')?.addEventListener('click', () => {
       const next = store.snapshot.mode === 'password' ? 'wechat' : 'password'
-      store.setState({ mode: next, wechatFlowId: null, wechatStatus: null, wechatQrUrl: null, wechatError: null })
-      stopWeChatPoll()
+      store.setState({ mode: next, wechatReady: false, wechatError: null })
       if (next === 'wechat') void initWeChatQr()
     })
 
@@ -977,17 +937,21 @@ const css = `
   justify-content: center;
   margin-bottom: 22px;
 }
-.dsh-qr-img {
-  width: 184px; height: 184px;
+.dsh-qr-container {
+  width: 300px; height: 400px;
   border-radius: 12px;
   border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.04);
+  background: #fff;
   box-shadow: 0 4px 32px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.06);
-  object-fit: contain;
-  padding: 12px;
+  overflow: hidden;
+}
+.dsh-qr-container iframe {
+  width: 100%; height: 100%;
+  border: 0;
+  display: block;
 }
 .dsh-qr-placeholder {
-  width: 184px; height: 184px;
+  width: 300px; height: 400px;
   border: 1px dashed rgba(255,255,255,0.14);
   border-radius: 12px;
   display: flex;
