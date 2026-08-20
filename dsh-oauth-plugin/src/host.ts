@@ -4,9 +4,9 @@
  *
  * Supports two login modes:
  * - **Username/password** — POST /api/auth/login proxies to the remote API.
- * - **WeChat Enterprise QR** — POST /api/auth/wechat-qr generates a QR flow,
- *   GET  /api/auth/wechat-status polls for scan/confirm,
- *   POST /api/auth/wechat-login exchanges the WeChat code for a session.
+ * - **WeChat Website App scan login** — the client embeds the official
+ *   wxLogin.js QR; WeChat redirects to /api/auth/wechat/callback with a
+ *   `code`; the host exchanges it for a session.
  *
  * Session isolation is achieved by recording a `sessionId → userId` mapping
  * whenever a session is created while a user is authenticated.
@@ -31,9 +31,8 @@ import {
   type LoginResponse,
   type SessionUserMapping,
   type UserInfo,
-  type WeChatQrData,
-  type WeChatQrRequest,
-  type WeChatStatusResponse,
+  type WeChatCallbackQuery,
+  type WeChatConfigResponse,
 } from './types.ts'
 
 // ---------------------------------------------------------------------------
@@ -46,22 +45,14 @@ declare module '@deepseek-ai/cordis' {
 }
 
 // ---------------------------------------------------------------------------
-// Pending WeChat QR login state (in-memory only)
+// Pending WeChat OAuth states (in-memory only)
 // ---------------------------------------------------------------------------
 
-interface PendingWeChatLogin {
-  flowId: string
-  /** Timestamp (ms) when the QR was created. */
+interface PendingWeChatState {
+  /** Timestamp (ms) when the state was issued. */
   createdAt: number
   /** TTL in ms. */
   ttlMs: number
-  /** QR data returned by the upstream API. */
-  qr: WeChatQrData
-  /** Resolved user after the user scans + confirms, or `undefined`. */
-  user: UserInfo | undefined
-  /** Status: waiting → scanned → confirmed → expired / error. */
-  status: 'waiting' | 'scanned' | 'confirmed' | 'expired' | 'error'
-  errorMessage?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -82,10 +73,10 @@ export class Auth extends Service {
       logoutPath: z.string(),
       sessionMapFile: z.string(),
       wechatEnabled: z.boolean(),
-      wechatApiUrl: z.string(),
-      wechatQrPath: z.string(),
-      wechatStatusPath: z.string(),
-      wechatLoginPath: z.string(),
+      wechatAppId: z.string(),
+      wechatAppSecret: z.string(),
+      wechatRedirectUri: z.string(),
+      wechatStateTtlMs: z.number(),
       mockEnabled: z.boolean(),
     })
     .required()
@@ -111,8 +102,8 @@ export class Auth extends Service {
   /** Path to the persisted current-user JSON file (id + displayName, no token). */
   private currentUserPath: string
 
-  /** Pending WeChat QR login flows, keyed by flowId. */
-  private pendingWeChatLogins: Map<string, PendingWeChatLogin> = new Map()
+  /** Pending WeChat OAuth states, keyed by the single-use `state`. */
+  private pendingWeChatStates: Map<string, PendingWeChatState> = new Map()
 
   /**
    * @param ctx - Cordis context.
@@ -285,98 +276,96 @@ export class Auth extends Service {
   }
 
   // ---------------------------------------------------------------------------
-  // Public API — WeChat Enterprise QR
+  // Public API — WeChat Website App scan login
   // ---------------------------------------------------------------------------
 
   /**
-   * Generate (or return cached) a WeChat Enterprise QR code for the given flow.
-   * Calls the upstream WeChat API to obtain the QR data.
-   * @param flowId - client-generated unique flow identifier.
-   * @returns the QR data, or throws on error.
+   * Bootstrap a WeChat login session: mint a single-use CSRF `state` and
+   * return the client-safe parameters for wxLogin.js.
+   * @returns the WeChat config, or `enabled: false` when not configured.
    */
-  async getWeChatQr(flowId: string): Promise<WeChatQrData> {
-    const url = this.config.wechatApiUrl + this.config.wechatQrPath
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ flowId }),
-    })
-
-    if (!response.ok) {
-      throw { code: 'SERVER_ERROR', message: `wechat QR API returned ${response.status}` }
+  getWeChatConfig(): WeChatConfigResponse {
+    if (!this.config.wechatEnabled) {
+      return { enabled: false, appId: '', redirectUri: '', state: '', scope: 'snsapi_login' }
     }
-
-    const data = (await response.json()) as { qr: WeChatQrData; ok: boolean }
-    if (!data.ok || !data.qr) throw { code: 'SERVER_ERROR', message: 'wechat QR API returned invalid response' }
-
-    const qr = data.qr
-    const ttlMs = (qr.ttlSeconds ?? 300) * 1000
-    this.pendingWeChatLogins.set(flowId, {
-      flowId,
+    const state = randomUUID()
+    this.pendingWeChatStates.set(state, {
       createdAt: Date.now(),
-      ttlMs,
-      qr,
-      user: undefined,
-      status: 'waiting',
+      ttlMs: this.config.wechatStateTtlMs,
     })
-    return qr
-  }
-
-  /**
-   * Poll the status of a WeChat QR login flow.
-   * @param flowId - the flow identifier.
-   * @returns the current status response.
-   */
-  getWeChatStatus(flowId: string): WeChatStatusResponse {
-    const pending = this.pendingWeChatLogins.get(flowId)
-    if (pending === undefined) {
-      return { status: 'error', message: 'flow not found' }
-    }
-
-    // Check expiry.
-    if (Date.now() - pending.createdAt > pending.ttlMs) {
-      pending.status = 'expired'
-      return { status: 'expired' }
-    }
-
     return {
-      status: pending.status,
-      message: pending.errorMessage,
-      user: pending.user,
+      enabled: true,
+      appId: this.config.wechatAppId,
+      redirectUri: this.config.wechatRedirectUri,
+      state,
+      scope: 'snsapi_login',
     }
   }
 
   /**
-   * Complete a WeChat QR login once the upstream callback signals confirmation.
-   * Called internally by the `/api/auth/wechat-login` route.
-   * @param flowId - the flow identifier.
-   * @param code - auth code from the WeChat callback.
+   * Complete a WeChat Website App login from the OAuth callback.
+   * Validates the single-use `state` (CSRF guard), exchanges the `code`
+   * for an access token, fetches the user profile, and signs the user in.
+   * @param query - the callback query (`code` and `state`).
    * @returns the authenticated user info.
+   * @throws {AuthError} on invalid state or upstream failure.
    */
-  async completeWeChatLogin(flowId: string, code: string): Promise<UserInfo> {
-    const pending = this.pendingWeChatLogins.get(flowId)
+  async completeWeChatLogin(query: WeChatCallbackQuery): Promise<UserInfo> {
+    const pending = this.pendingWeChatStates.get(query.state)
     if (pending === undefined) {
-      throw { code: 'SERVER_ERROR', message: 'flow not found' }
+      throw { code: 'UNAUTHORIZED', message: 'invalid wechat state' }
+    }
+    this.pendingWeChatStates.delete(query.state) // single-use: never replayable
+    if (Date.now() - pending.createdAt > pending.ttlMs) {
+      throw { code: 'UNAUTHORIZED', message: 'wechat state expired' }
     }
 
-    // Exchange the code for user info via the upstream API.
-    const url = this.config.wechatApiUrl + this.config.wechatLoginPath
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ flowId, code }),
-    })
-
-    if (!response.ok) {
-      pending.status = 'error'
-      pending.errorMessage = `wechat login returned ${response.status}`
-      throw { code: 'SERVER_ERROR', message: pending.errorMessage }
+    const tokenRes = await fetch(
+      'https://api.weixin.qq.com/sns/oauth2/access_token'
+      + `?appid=${encodeURIComponent(this.config.wechatAppId)}`
+      + `&secret=${encodeURIComponent(this.config.wechatAppSecret)}`
+      + `&code=${encodeURIComponent(query.code)}`
+      + '&grant_type=authorization_code',
+    )
+    if (!tokenRes.ok) {
+      throw { code: 'SERVER_ERROR', message: `wechat access_token API returned ${tokenRes.status}` }
+    }
+    const tokenData = (await tokenRes.json()) as {
+      access_token?: string
+      openid?: string
+      unionid?: string
+      errcode?: number
+      errmsg?: string
+    }
+    if (tokenData.errcode || !tokenData.access_token || !tokenData.openid) {
+      throw { code: 'UNAUTHORIZED', message: tokenData.errmsg ?? 'wechat code exchange failed' }
     }
 
-    const data = (await response.json()) as LoginResponse
-    const user = data.user
-    pending.user = user
-    pending.status = 'confirmed'
+    const infoRes = await fetch(
+      'https://api.weixin.qq.com/sns/userinfo'
+      + `?access_token=${encodeURIComponent(tokenData.access_token)}`
+      + `&openid=${encodeURIComponent(tokenData.openid)}`,
+    )
+    if (!infoRes.ok) {
+      throw { code: 'SERVER_ERROR', message: `wechat userinfo API returned ${infoRes.status}` }
+    }
+    const infoData = (await infoRes.json()) as {
+      openid?: string
+      unionid?: string
+      nickname?: string
+      headimgurl?: string
+      errcode?: number
+      errmsg?: string
+    }
+    if (infoData.errcode || !infoData.openid) {
+      throw { code: 'UNAUTHORIZED', message: infoData.errmsg ?? 'wechat userinfo failed' }
+    }
+
+    const user: UserInfo = {
+      id: infoData.unionid ?? infoData.openid,
+      displayName: infoData.nickname ?? infoData.openid,
+      token: tokenData.access_token,
+    }
     this._setCurrentUser(user)
     return user
   }
@@ -533,99 +522,54 @@ function setupPlugin(auth: Auth, ctx: Context): void {
     },
   })
 
-  // POST /api/auth/wechat-qr — generate a WeChat Enterprise QR login flow.
+  // GET /api/auth/wechat/config — bootstrap a WeChat scan-login session.
   webServer.register({
     kind: 'exact',
-    path: '/api/auth/wechat-qr',
-    handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    path: '/api/auth/wechat/config',
+    handler: async (_req: IncomingMessage, res: ServerResponse): Promise<void> => {
       res.setHeader('Content-Type', 'application/json')
-      let body: string
-      try {
-        body = await new Promise<string>((resolve, reject) => {
-          let chunks = ''
-          req.on('data', (chunk: Buffer) => { chunks += chunk.toString() })
-          req.on('end', () => resolve(chunks))
-          req.on('error', reject)
-        })
-      } catch {
-        res.writeHead(400)
-        res.end(JSON.stringify({ ok: false, error: 'invalid body' }))
-        return
-      }
-      let parsed: WeChatQrRequest
-      try {
-        parsed = JSON.parse(body) as WeChatQrRequest
-      } catch {
-        res.writeHead(400)
-        res.end(JSON.stringify({ ok: false, error: 'malformed JSON' }))
-        return
-      }
-      try {
-        const qr = await auth.getWeChatQr(parsed.flowId)
-        res.writeHead(200)
-        res.end(JSON.stringify({ ok: true, qr }))
-      } catch (err) {
-        const error = err as { code: string; message: string }
-        res.writeHead(500)
-        res.end(JSON.stringify({ ok: false, error: error.message }))
-      }
-    },
-  })
-
-  // GET /api/auth/wechat-status?flowId=xxx — poll WeChat QR login status.
-  webServer.register({
-    kind: 'exact',
-    path: '/api/auth/wechat-status',
-    handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-      res.setHeader('Content-Type', 'application/json')
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
-      const flowId = url.searchParams.get('flowId')
-      if (!flowId) {
-        res.writeHead(400)
-        res.end(JSON.stringify({ status: 'error', message: 'flowId is required' }))
-        return
-      }
-      const status = auth.getWeChatStatus(flowId)
       res.writeHead(200)
-      res.end(JSON.stringify(status))
+      res.end(JSON.stringify(auth.getWeChatConfig()))
     },
   })
 
-  // POST /api/auth/wechat-login — exchange WeChat code for a session.
+  // GET /api/auth/wechat/callback — WeChat OAuth callback (code + state).
+  // Runs inside the wxLogin.js iframe, so it answers with an HTML page that
+  // reports the result to the parent via postMessage.
   webServer.register({
     kind: 'exact',
-    path: '/api/auth/wechat-login',
+    path: '/api/auth/wechat/callback',
     handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-      res.setHeader('Content-Type', 'application/json')
-      let body: string
-      try {
-        body = await new Promise<string>((resolve, reject) => {
-          let chunks = ''
-          req.on('data', (chunk: Buffer) => { chunks += chunk.toString() })
-          req.on('end', () => resolve(chunks))
-          req.on('error', reject)
-        })
-      } catch {
-        res.writeHead(400)
-        res.end(JSON.stringify({ ok: false, error: 'invalid body' }))
-        return
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
+      const query: WeChatCallbackQuery = {
+        code: url.searchParams.get('code') ?? '',
+        state: url.searchParams.get('state') ?? '',
       }
-      let parsed: { flowId: string; code: string }
-      try {
-        parsed = JSON.parse(body) as { flowId: string; code: string }
-      } catch {
+      if (!query.code || !query.state) {
         res.writeHead(400)
-        res.end(JSON.stringify({ ok: false, error: 'malformed JSON' }))
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.end('<html><body><h1>微信登录失败</h1><p>缺少 code 或 state 参数</p></body></html>')
         return
       }
       try {
-        const user = await auth.completeWeChatLogin(parsed.flowId, parsed.code)
+        const user = await auth.completeWeChatLogin(query)
+        const safe = { id: user.id, displayName: user.displayName }
+        const payload = JSON.stringify({ type: 'dsh-wechat-login', user: safe })
         res.writeHead(200)
-        res.end(JSON.stringify({ ok: true, user }))
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.end(`<!DOCTYPE html><html><body>
+<script>window.parent.postMessage(${payload}, '*')</script>
+<h1>微信登录成功</h1><p>欢迎，${safe.displayName}。本窗口可关闭。</p>
+</body></html>`)
       } catch (err) {
-        const error = err as { code: string; message: string }
-        res.writeHead(500)
-        res.end(JSON.stringify({ ok: false, error: error.message }))
+        const error = err as AuthError
+        const payload = JSON.stringify({ type: 'dsh-wechat-login', error: error.message })
+        res.writeHead(200)
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.end(`<!DOCTYPE html><html><body>
+<script>window.parent.postMessage(${payload}, '*')</script>
+<h1>微信登录失败</h1><p>${error.message}</p>
+</body></html>`)
       }
     },
   })
