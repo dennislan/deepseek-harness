@@ -99,8 +99,14 @@ export class Auth extends Service {
   /** sessionId → userId mapping, loaded from disk on init. */
   private sessionMap: SessionUserMapping = {}
 
+  /** workspaceId → userId mapping, loaded from disk on init. */
+  private workspaceMap: Record<string, string> = {}
+
   /** Absolute path to the on-disk session map. */
   private sessionMapPath: string
+
+  /** Absolute path to the on-disk workspace map. */
+  private workspaceMapPath: string
 
   /** Path to the persisted current-user JSON file (id + displayName, no token). */
   private currentUserPath: string
@@ -117,8 +123,10 @@ export class Auth extends Service {
     this.config = { ...DEFAULT_CONFIG, ...config }
     const mapFileName = this.config.sessionMapFile ?? DEFAULT_CONFIG.sessionMapFile
     this.sessionMapPath = join(expandHomePath(process.env.DSH_HOME ?? '~/.dsh'), mapFileName)
+    this.workspaceMapPath = join(expandHomePath(process.env.DSH_HOME ?? '~/.dsh'), '.oauth-workspaces.json')
     this.currentUserPath = join(expandHomePath(process.env.DSH_HOME ?? '~/.dsh'), 'oauth-user.json')
     void this._loadUserState()
+    void this.loadWorkspaceMap()
   }
 
   // ---------------------------------------------------------------------------
@@ -144,8 +152,15 @@ export class Auth extends Service {
   async login(request: LoginRequest): Promise<UserInfo> {
     // Mock mode: accept admin/admin without a remote API.
     if (this.config.mockEnabled) {
+      // Mock admin
       if (request.username === 'admin' && request.password === 'admin') {
         const user: UserInfo = { id: 'mock-admin', displayName: 'Admin', token: 'mock-token' }
+        this._setCurrentUser(user)
+        return user
+      }
+      // Mock dennis
+      if (request.username === 'dennis' && request.password === 'dennis') {
+        const user: UserInfo = { id: 'mock-dennis', displayName: 'Dennis', token: 'mock-token' }
         this._setCurrentUser(user)
         return user
       }
@@ -223,6 +238,50 @@ export class Auth extends Service {
    */
   getSessionMap(): SessionUserMapping {
     return { ...this.sessionMap }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Workspace ownership
+  // ---------------------------------------------------------------------------
+
+  /** Returns all workspace IDs owned by `userId`. */
+  getWorkspacesForUser(userId: string): string[] {
+    return Object.entries(this.workspaceMap)
+      .filter(([, uid]) => uid === userId)
+      .map(([wid]) => wid)
+  }
+
+  /** Returns whether `workspaceId` is owned by `userId`. */
+  hasWorkspace(workspaceId: string, userId: string): boolean {
+    return this.workspaceMap[workspaceId] === userId
+  }
+
+  /** Associate `workspaceId` with `userId` and persist. */
+  associateWorkspace(workspaceId: string, userId: string): void {
+    this.workspaceMap[workspaceId] = userId
+    void this._persistWorkspaceMap()
+  }
+
+  private async _persistWorkspaceMap(): Promise<void> {
+    try {
+      // Plain overwrite: the in-memory map is authoritative and every change
+      // must replace the previous contents (a first-write-wins flag would
+      // freeze the file after the first association). This plugin owns
+      // $DSH_HOME state files under the single-process assumption in README.
+      await writeFile(this.workspaceMapPath, JSON.stringify(this.workspaceMap, null, 2), 'utf8')
+    } catch {
+      // A write failure keeps the in-memory map authoritative; the next
+      // association retries the write.
+    }
+  }
+
+  async loadWorkspaceMap(): Promise<void> {
+    try {
+      const text = await readFile(this.workspaceMapPath, 'utf8')
+      this.workspaceMap = JSON.parse(text) as Record<string, string>
+    } catch {
+      this.workspaceMap = {}
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -343,9 +402,13 @@ export class Auth extends Service {
       displayName: this.currentUser.displayName,
     }
     try {
-      writeFile(this.currentUserPath, JSON.stringify(safe), { encoding: 'utf8', flag: 'wx' })
+      // Plain overwrite: the persisted user must reflect the most recent
+      // login, so a user switch replaces the previous user on disk (a
+      // first-write-wins flag would restore the stale user after restart).
+      writeFile(this.currentUserPath, JSON.stringify(safe), 'utf8')
     } catch {
-      // EEXIST: another process wrote first — ignore.
+      // A write failure leaves the previous user on disk; the in-memory
+      // current user stays authoritative and the next login retries.
     }
   }
 
@@ -365,18 +428,14 @@ export class Auth extends Service {
 
   private async _persistSessionMap(): Promise<void> {
     try {
-      await writeFile(this.sessionMapPath, JSON.stringify(this.sessionMap, null, 2), {
-        encoding: 'utf8',
-        flag: 'wx',
-      })
+      // Plain overwrite: the in-memory map is authoritative and every change
+      // must replace the previous contents (a first-write-wins flag would
+      // freeze the file after the first association). This plugin owns
+      // $DSH_HOME state files under the single-process assumption in README.
+      await writeFile(this.sessionMapPath, JSON.stringify(this.sessionMap, null, 2), 'utf8')
     } catch {
-      // EEXIST means another process wrote it first — reread instead.
-      try {
-        const text = await readFile(this.sessionMapPath, 'utf8')
-        this.sessionMap = JSON.parse(text) as SessionUserMapping
-      } catch {
-        // File absent or corrupt: keep in-memory state; retry next write.
-      }
+      // A write failure keeps the in-memory map authoritative; the next
+      // association retries the write.
     }
   }
 
@@ -571,6 +630,40 @@ function setupPlugin(auth: Auth, ctx: Context): void {
     },
   })
 
+  // GET /api/auth/sessions — return session IDs owned by the current user.
+  webServer.register({
+    kind: 'exact',
+    path: '/api/auth/sessions',
+    handler: async (_req: IncomingMessage, res: ServerResponse): Promise<void> => {
+      res.setHeader('Content-Type', 'application/json')
+      if (!auth.isAuthenticated()) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ sessions: [] }))
+        return
+      }
+      const sessions = auth.getSessionsForUser(auth.getCurrentUser()!.id)
+      res.writeHead(200)
+      res.end(JSON.stringify({ sessions }))
+    },
+  })
+
+  // GET /api/auth/workspaces — return workspace IDs owned by the current user.
+  webServer.register({
+    kind: 'exact',
+    path: '/api/auth/workspaces',
+    handler: async (_req: IncomingMessage, res: ServerResponse): Promise<void> => {
+      res.setHeader('Content-Type', 'application/json')
+      if (!auth.isAuthenticated()) {
+        res.writeHead(401)
+        res.end(JSON.stringify({ workspaces: [] }))
+        return
+      }
+      const workspaces = auth.getWorkspacesForUser(auth.getCurrentUser()!.id)
+      res.writeHead(200)
+      res.end(JSON.stringify({ workspaces }))
+    },
+  })
+
   // Session lifecycle: auto-associate sessions with the current user.
   ctx.on('session/created', (session: { id: SessionId }): void => {
     if (auth.isAuthenticated()) {
@@ -580,6 +673,203 @@ function setupPlugin(auth: Auth, ctx: Context): void {
 
   ctx.on('session/disposed', (session: { id: SessionId }): void => {
     auth.dissociateSession(session.id)
+  })
+
+  // Intercept the wire API to enforce per-user isolation. Exact routes
+  // override the built-in handlers, so the filter runs instead of them.
+  /** Wire subset of the ApiProxy `workspace`/`session` domains these
+   *  interceptors call. Declared locally because the plugin is standalone
+   *  and does not depend on @deepseek-ai/dsh-host-apiproxy; mirrors the
+   *  WorkspaceApi and SessionsApi RpcResponse shapes. */
+  interface ApiProxyWire {
+    workspace: {
+      list(request: { rpcId: string; payload: Record<string, unknown> }): Promise<{
+        rpcId: string
+        result:
+          | { ok: true; value: { items: Array<{ workspaceId: string; sessionIds?: string[] }> } }
+          | { ok: false; error: { code: string; message: string } }
+      }>
+      create(request: { rpcId: string; payload: Record<string, unknown> }): Promise<{
+        rpcId: string
+        result:
+          | { ok: true; value: { workspace: { workspaceId: string } } }
+          | { ok: false; error: { code: string; message: string } }
+      }>
+    }
+    sessions: {
+      list(request: { rpcId: string; payload: Record<string, unknown> }): Promise<{
+        rpcId: string
+        result:
+          | { ok: true; value: { items: Array<{ sessionId: string }> } }
+          | { ok: false; error: { code: string; message: string } }
+      }>
+      history(request: { rpcId: string; payload: Record<string, unknown> }): Promise<{
+        rpcId: string
+        result: { ok: boolean }
+      }>
+    }
+  }
+
+  /** Reads and parses a JSON-RPC request body shared by the interceptors.
+   *  Returns `undefined` on malformed input; the caller answers 400. */
+  function readRpcBody(req: IncomingMessage): Promise<{ rpcId: string; payload: Record<string, unknown> } | undefined> {
+    return new Promise((resolve) => {
+      let chunks = ''
+      req.on('data', (chunk: Buffer) => { chunks += chunk.toString() })
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(chunks) as { rpcId?: unknown; payload?: unknown }
+          if (typeof parsed.rpcId !== 'string') {
+            resolve(undefined)
+            return
+          }
+          const payload = parsed.payload
+          resolve({
+            rpcId: parsed.rpcId,
+            payload: payload !== null && typeof payload === 'object' ? payload as Record<string, unknown> : {},
+          })
+        } catch {
+          resolve(undefined)
+        }
+      })
+      req.on('error', () => resolve(undefined))
+    })
+  }
+
+  ctx.inject(['apiProxy'], (apiCtx) => {
+    const apiProxy = apiCtx.get('apiProxy')
+    if (apiProxy === undefined) return
+    const injectedWebServer = apiCtx.get('webServer')
+    if (injectedWebServer === undefined) return
+    apiCtx.effect(() => injectedWebServer.register({
+      kind: 'exact',
+      path: '/api/workspace.list',
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        res.setHeader('Content-Type', 'application/json')
+        const parsed = await readRpcBody(req)
+        if (parsed === undefined) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ type: 'server-response', rpcId: 'invalid', result: { ok: false, error: { code: 'bad-request', message: 'invalid request body' } } }))
+          return
+        }
+        const rpcResponse = await (apiProxy as ApiProxyWire).workspace.list({ rpcId: parsed.rpcId, payload: parsed.payload })
+        if (rpcResponse.result.ok) {
+          const value = rpcResponse.result.value
+          if (auth.isAuthenticated()) {
+            const userId = auth.getCurrentUser()!.id
+            const ownedWids = new Set(auth.getWorkspacesForUser(userId))
+            const ownedSessions = new Set<string>(auth.getSessionsForUser(userId))
+            // A workspace stays visible when the user owns it outright, or
+            // when it holds at least one session the user owns (a fresh
+            // user's default workspace is never associated until a session
+            // lands in it). Retained items keep only the user's own session
+            // ids, so a shared workspace shows only the user's sessions.
+            value.items = value.items.filter((item) => {
+              if (ownedWids.has(item.workspaceId)) return true
+              const ownedHere = (item.sessionIds ?? []).filter((sid) => ownedSessions.has(sid))
+              if (ownedHere.length > 0) {
+                item.sessionIds = ownedHere
+                return true
+              }
+              return false
+            })
+          } else {
+            // Unauthenticated callers own nothing and see no workspaces.
+            value.items = []
+          }
+        }
+        res.writeHead(200)
+        res.end(JSON.stringify({ type: 'server-response', ...rpcResponse }))
+      },
+    }), 'oauth: /api/workspace.list interception')
+
+    // Associate a newly created workspace with the current user. Runs on
+    // every successful create — picking an already-existing directory
+    // returns that workspace (created: false) and still associates it, so a
+    // directory shared between users is owned by each of them.
+    apiCtx.effect(() => injectedWebServer.register({
+      kind: 'exact',
+      path: '/api/workspace.create',
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        res.setHeader('Content-Type', 'application/json')
+        const parsed = await readRpcBody(req)
+        if (parsed === undefined) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ type: 'server-response', rpcId: 'invalid', result: { ok: false, error: { code: 'bad-request', message: 'invalid request body' } } }))
+          return
+        }
+        const rpcResponse = await (apiProxy as ApiProxyWire).workspace.create({ rpcId: parsed.rpcId, payload: parsed.payload })
+        if (rpcResponse.result.ok && auth.isAuthenticated()) {
+          auth.associateWorkspace(rpcResponse.result.value.workspace.workspaceId, auth.getCurrentUser()!.id)
+        }
+        res.writeHead(200)
+        res.end(JSON.stringify({ type: 'server-response', ...rpcResponse }))
+      },
+    }), 'oauth: /api/workspace.create interception')
+
+    // Enforce session isolation server-side. The session-search route
+    // revalidates its hits against this list, so filtering here also
+    // isolates search results.
+    apiCtx.effect(() => injectedWebServer.register({
+      kind: 'exact',
+      path: '/api/session.list',
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        res.setHeader('Content-Type', 'application/json')
+        const parsed = await readRpcBody(req)
+        if (parsed === undefined) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ type: 'server-response', rpcId: 'invalid', result: { ok: false, error: { code: 'bad-request', message: 'invalid request body' } } }))
+          return
+        }
+        const rpcResponse = await (apiProxy as ApiProxyWire).sessions.list({ rpcId: parsed.rpcId, payload: parsed.payload })
+        if (rpcResponse.result.ok) {
+          const value = rpcResponse.result.value
+          if (auth.isAuthenticated()) {
+            const owned = new Set<string>(auth.getSessionsForUser(auth.getCurrentUser()!.id))
+            value.items = value.items.filter((item) => owned.has(item.sessionId))
+          } else {
+            value.items = []
+          }
+        }
+        res.writeHead(200)
+        res.end(JSON.stringify({ type: 'server-response', ...rpcResponse }))
+      },
+    }), 'oauth: /api/session.list interception')
+
+    // Guard session.history reads by ownership. A request for a session the
+    // current user does not own answers exactly like a missing session, so
+    // existence never leaks; unauthenticated callers own nothing and are
+    // denied the same way. Payloads without a sessionId are forwarded, so a
+    // future payload change cannot lock callers out.
+    apiCtx.effect(() => injectedWebServer.register({
+      kind: 'exact',
+      path: '/api/session.history',
+      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        res.setHeader('Content-Type', 'application/json')
+        const parsed = await readRpcBody(req)
+        if (parsed === undefined) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ type: 'server-response', rpcId: 'invalid', result: { ok: false, error: { code: 'bad-request', message: 'invalid request body' } } }))
+          return
+        }
+        const sessionId = parsed.payload.sessionId
+        if (typeof sessionId === 'string') {
+          const owned = auth.isAuthenticated() && new Set<string>(auth.getSessionsForUser(auth.getCurrentUser()!.id)).has(sessionId)
+          if (!owned) {
+            res.writeHead(200)
+            res.end(JSON.stringify({
+              type: 'server-response',
+              rpcId: parsed.rpcId,
+              result: { ok: false, error: { code: 'session-not-found', message: 'Session not found', details: { sessionId } } },
+            }))
+            return
+          }
+        }
+        const rpcResponse = await (apiProxy as ApiProxyWire).sessions.history({ rpcId: parsed.rpcId, payload: parsed.payload })
+        res.writeHead(200)
+        res.end(JSON.stringify({ type: 'server-response', ...rpcResponse }))
+      },
+    }), 'oauth: /api/session.history interception')
   })
 }
 
