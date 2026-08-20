@@ -67,7 +67,9 @@ PRUNE_SCRIPT="$SCRIPT_DIR/prune-node-modules.mjs"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
-NPM_DSH_VERSION="$(npm view @deepseek-ai/dsh version --registry https://registry.npmjs.org 2>/dev/null || echo '0.1.0-rc.6')"
+# 从 GitHub release 获取最新版本（以 GitHub 为准，npm 可能滞后）
+# GitHub tag 格式为 dsh-v0.1.0-rc.N，需去掉前缀 dsh- 得到 npm 版本
+NPM_DSH_VERSION="$(gh release list --repo deepseek-ai/deepseek-harness --limit 1 --json tagName --jq '.[0].tagName' | sed 's/^dsh-//' 2>/dev/null || npm view @deepseek-ai/dsh version --registry https://registry.npmjs.org 2>/dev/null || echo '0.1.0-rc.6')"
 # printf '%b\n' "  ${CYAN}使用 npm 最新版本: ${NPM_DSH_VERSION}${NC}"
 NPM_CLOSURE_DIR="$NATIVE_MACOS_DIR/dist/.dsh-npm-closure"
 
