@@ -118,7 +118,7 @@ actor DshServer {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: resolvedNode)
-        process.arguments = [binPath.path, "--profile", "web", "--port", "\(port)"]
+        process.arguments = [binPath.path, "--profile", "web", "--port", "\(port)", "--no-open"]
 
         // Persist user data under ~/.dsh; an explicit DSH_HOME wins (matches
         // dsh-home-paths precedence: configured > $DSH_HOME > ~/.dsh).
