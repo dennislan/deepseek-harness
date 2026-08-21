@@ -109,6 +109,13 @@ export interface Config {
    * `code` lifetime).
    */
   wechatStateTtlMs?: number
+  /**
+   * Whether to enable WeChat quick login (fast_login parameter in wxLogin.js).
+   * When true (default), users on supported WeChat desktop clients can log in
+   * without scanning the QR code. Requires WeChat 3.9.11+ on Windows or
+   * 4.0.0+ on macOS, with the client logged in and not locked.
+   */
+  wechatFastLogin?: boolean
 }
 
 export const DEFAULT_CONFIG: Required<Omit<Config, 'apiUrl'>> = {
@@ -122,6 +129,7 @@ export const DEFAULT_CONFIG: Required<Omit<Config, 'apiUrl'>> = {
   wechatAppSecret: '',
   wechatRedirectUri: '',
   wechatStateTtlMs: 600000,
+  wechatFastLogin: true,
 }
 
 /** Response body for the WeChat login bootstrap endpoint. */
@@ -143,6 +151,12 @@ export interface WeChatConfigResponse {
   state: string
   /** OAuth scope, always `snsapi_login` for website-app login. */
   scope: string
+  /**
+   * Whether quick login is enabled. When true, WeChat desktop clients
+   * (3.9.11+ Windows / 4.0.0+ macOS) may show a quick-login button
+   * instead of requiring a full QR scan.
+   */
+  fastLogin: boolean
 }
 
 /** Query parameters on the WeChat OAuth callback (`/api/auth/wechat/callback`). */

@@ -12,7 +12,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   DEFAULT_PROFILE_BUNDLES,
   initProfile,
@@ -26,6 +26,20 @@ import {
 import { INSTALL_ANCHOR } from './profile-boot.ts'
 
 const NAME = 'dsh'
+
+/**
+ * Resolve the pnpm binary to use, preferring the one from the same Node
+ * installation over system-wide copies (e.g. Homebrew) that may have version
+ * incompatibilities. Falls back to bare 'pnpm' for PATH resolution when no
+ * co-located binary is found.
+ */
+function resolvePnpmBinary(): string {
+  const nodeBin = dirname(process.execPath)
+  const candidate = join(nodeBin, 'pnpm')
+  if (existsSync(candidate)) return candidate
+  return 'pnpm'
+}
+
 
 /**
  * Whether a resolved dependency exports a profile patch, i.e. is a bundle.
@@ -124,9 +138,10 @@ export function runPlugin(profile: string, args: readonly string[]): number {
     process.stderr.write(`${NAME}: initialized profile ${profile} at ${dir}\n`)
   }
   const before = readProfileManifest(NAME, dir)
+  const pnpm = resolvePnpmBinary()
   // Windows resolves pnpm through its .cmd shim, which spawn() refuses
   // without a shell since the CVE-2024-27980 hardening.
-  const result = spawnSync('pnpm', args.map(argument => anchorPathSpec(argument, process.cwd())), {
+  const result = spawnSync(pnpm, args.map(argument => anchorPathSpec(argument, process.cwd())), {
     cwd: dir,
     stdio: 'inherit',
     shell: process.platform === 'win32',

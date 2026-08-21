@@ -368,7 +368,7 @@ export function apply(_ctx: unknown): void {
     try {
       const res = await fetch('/api/auth/wechat/config')
       if (!res.ok) throw new Error('Failed to load WeChat config')
-      const cfg = await res.json() as { enabled: boolean; appId: string; redirectUri: string; state: string; scope: string }
+      const cfg = await res.json() as { enabled: boolean; appId: string; redirectUri: string; state: string; scope: string; fastLogin: boolean }
       if (!cfg.enabled || !cfg.appId || !cfg.redirectUri || !cfg.state) {
         store.setState({ wechatError: 'WeChat login is not configured on the server.' })
         if (ph) ph.textContent = 'WeChat login unavailable'
@@ -383,6 +383,7 @@ export function apply(_ctx: unknown): void {
         redirect_uri: cfg.redirectUri,
         state: cfg.state,
         style: 'white',
+        ...(cfg.fastLogin ? {} : { fast_login: 0 }),
       })
       store.setState({ wechatReady: true })
       if (ph) ph.style.display = 'none'

@@ -77,6 +77,7 @@ export class Auth extends Service {
       wechatAppSecret: z.string(),
       wechatRedirectUri: z.string(),
       wechatStateTtlMs: z.number(),
+      wechatFastLogin: z.boolean(),
       mockEnabled: z.boolean(),
     })
     .required()
@@ -286,7 +287,7 @@ export class Auth extends Service {
    */
   getWeChatConfig(): WeChatConfigResponse {
     if (!this.config.wechatEnabled) {
-      return { enabled: false, appId: '', redirectUri: '', state: '', scope: 'snsapi_login' }
+      return { enabled: false, appId: '', redirectUri: '', state: '', scope: 'snsapi_login', fastLogin: true }
     }
     const state = randomUUID()
     this.pendingWeChatStates.set(state, {
@@ -299,6 +300,7 @@ export class Auth extends Service {
       redirectUri: this.config.wechatRedirectUri,
       state,
       scope: 'snsapi_login',
+      fastLogin: this.config.wechatFastLogin ?? true,
     }
   }
 

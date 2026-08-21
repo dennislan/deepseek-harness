@@ -36,6 +36,7 @@ dsh plugin --profile web add dsh-oauth
     wechatAppSecret: '...'         # 微信开放平台 AppSecret（仅服务端使用）
     wechatRedirectUri: 'http://127.0.0.1:3080/api/auth/wechat/callback'
     wechatStateTtlMs: 600000       # 一次性 state 有效期，默认 10 分钟
+    wechatFastLogin: true          # 微信快速登录，默认 true
 ```
 
 微信扫码登录要求：
@@ -85,6 +86,14 @@ dsh plugin --profile web add dsh-oauth
 
 失败或过期时回调页同样通过 `postMessage` 回报错误，遮罩展示错误并允许重新扫码。
 
+**微信快速登录**（wechatFastLogin）：
+- 默认启用（`wechatFastLogin: true`）。当用户的微信桌面客户端满足以下条件时，QR 码内会显示快速登录按钮，用户可直接登录而无需扫码：
+  - Windows：微信 3.9.11+
+  - macOS：微信 4.0.0+
+  - 客户端已登录且未锁定
+- 如需禁用，设置 `wechatFastLogin: false`，客户端会向 wxLogin.js 传入 `fast_login: 0` 参数，强制显示完整 QR 码。
+- 快速登录的显示时机由微信官方 iframe 控制，插件仅负责传递开关状态。
+
 ## 配置项
 
 | 键 | 默认 | 说明 |
@@ -99,6 +108,7 @@ dsh plugin --profile web add dsh-oauth
 | `wechatAppSecret` | `''` | 微信开放平台 AppSecret（仅服务端使用，绝不出现在前端） |
 | `wechatRedirectUri` | `''` | 微信 OAuth 回调地址，需在开放平台配置为授权回调域 |
 | `wechatStateTtlMs` | `600000` | 一次性 `state` 有效期（毫秒） |
+| `wechatFastLogin` | `true` | 是否启用微信快速登录（默认 true）；要求微信 3.9.11+（Windows）/ 4.0.0+（macOS）桌面客户端已登录且非锁定 |
 
 ## 远程 API 契约
 
@@ -144,7 +154,8 @@ dsh plugin --profile web add dsh-oauth
   "appId": "wx…",
   "redirectUri": "http://127.0.0.1:3080/api/auth/wechat/callback",
   "state": "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx",
-  "scope": "snsapi_login"
+  "scope": "snsapi_login",
+  "fastLogin": true
 }
 ```
 

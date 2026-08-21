@@ -7,10 +7,11 @@
 #   ./scripts/deploy.sh --build-only   # build without deploying
 #
 # The script:
-#   1. Builds client.js via tsdown, then copies client.cjs → client.js
+#   1. Runs `tsc --build --force` to emit .js + .d.ts files for all src modules.
+#   2. Builds client.js via tsdown, then copies client.cjs → client.js
 #      (tsdown emits CJS as .cjs; we rename for the loader).
-#   2. Tries `dsh plugin --profile web add <path>` to update the profile.
-#   3. Falls back to direct file copy when pnpm store writes are blocked
+#   3. Tries `dsh plugin --profile web add <path>` to update the profile.
+#   4. Falls back to direct file copy when pnpm store writes are blocked
 #      (e.g. inside an agent sandbox).
 set -euo pipefail
 
@@ -19,14 +20,20 @@ PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROFILE_DIR="${DSH_PROFILE_DIR:-$HOME/.dsh/profiles/web}"
 DSH_CLI="${DSH_CLI:-$(command -v dsh 2>/dev/null || echo '')}"
 TSDOWN_BIN="$PLUGIN_ROOT/../node_modules/.bin/tsdown"
+TSC_BIN="$PLUGIN_ROOT/../node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/bin/tsc"
 
 SRC_FILES=(
   src/client.ts
+  src/host.ts
+  src/types.ts
+  src/index.ts
+  src/invariant.ts
+  src/client-index.ts
   tsdown.config.ts
 )
 
 built() {
-  [ -f "$PLUGIN_ROOT/lib/client.js" ]
+  [ -f "$PLUGIN_ROOT/lib/client.js" ] && [ -f "$PLUGIN_ROOT/lib/types/host.d.ts" ]
 }
 
 srcs_changed() {
@@ -51,6 +58,16 @@ build() {
     echo "[deploy]   run: cd /Users/dennis/AIProjects/deepseek-harness && pnpm install" >&2
     exit 1
   fi
+  # Emit .js + .d.ts for all src modules (required for package.json exports).
+  # --force ensures declarations are regenerated even when the incremental cache
+  # reports the project as up-to-date (common after deleting tsconfig.tsbuildinfo).
+  echo "[deploy] running tsc --build --force …"
+  "$TSC_BIN" --build --force 2>&1 || {
+    echo "[deploy] tsc build failed" >&2
+    exit 1
+  }
+  # tsdown bundles the client entry into lib/client.cjs (CJS).
+  echo "[deploy] running tsdown for client bundle …"
   (cd "$PLUGIN_ROOT" && bash "$TSDOWN_BIN" \
     --config "$PLUGIN_ROOT/tsdown.config.ts" 2>&1) || {
     echo "[deploy] build failed" >&2
@@ -133,10 +150,20 @@ fallback_copy() {
   _cp_if_diff "$PLUGIN_ROOT/lib/invariant.js"       "$target_lib/invariant.js"    || return 1
   _cp_if_diff "$PLUGIN_ROOT/lib/types.js"           "$target_lib/types.js"        || return 1
   # types directory may not exist for standalone plugins — skip if absent
+  # IMPORTANT: the profile's dsh-oauth is often a symlink back to PLUGIN_ROOT,
+  # making source and target the same directory. Detect this and skip the copy
+  # to avoid accidentally deleting the source via rm -rf on the "target".
   if [ -d "$PLUGIN_ROOT/lib/types" ]; then
-    if [ ! -d "$target_lib/types" ] || ! cmp -rq "$PLUGIN_ROOT/lib/types" "$target_lib/types" 2>/dev/null; then
-      rm -rf "$target_lib/types"
-      cp -r "$PLUGIN_ROOT/lib/types" "$target_lib/types" || return 1
+    local src_real tgt_real
+    src_real=$(python3 -c "import os; print(os.path.realpath('$PLUGIN_ROOT/lib/types'))" 2>/dev/null || echo "$PLUGIN_ROOT/lib/types")
+    tgt_real=$(python3 -c "import os; print(os.path.realpath('$target_lib/types'))" 2>/dev/null || echo "$target_lib/types")
+    if [ "$src_real" = "$tgt_real" ]; then
+      echo "[deploy] types dir is co-located (symlinked) — skipping copy" >&2
+    else
+      if [ ! -d "$target_lib/types" ] || ! cmp -rq "$PLUGIN_ROOT/lib/types" "$target_lib/types" 2>/dev/null; then
+        rm -rf "$target_lib/types"
+        cp -r "$PLUGIN_ROOT/lib/types" "$target_lib/types" || return 1
+      fi
     fi
   fi
   echo "[deploy] copy OK"
