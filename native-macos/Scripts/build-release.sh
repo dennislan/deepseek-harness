@@ -57,6 +57,7 @@ APP_DIR="$NATIVE_MACOS_DIR/dist/$APP_NAME.app"
 
 TMP_DIR="/tmp/dsh-build-release"
 MODULE_CACHE="$TMP_DIR/module-cache"
+NPM_CACHE_DIR="$TMP_DIR/npm-cache"
 SRC_DIR="$NATIVE_MACOS_DIR/App"
 PRUNE_SCRIPT="$SCRIPT_DIR/prune-node-modules.mjs"
 
@@ -750,11 +751,21 @@ main() {
                     || fail "npm 闭包缺失 @ $NPM_CLOSURE_DIR —— 请不带 --skip-dsh 运行"
                 info "复用 npm 闭包 @ $NPM_CLOSURE_DIR（--skip-dsh）"
             else
-                [ "$CLEAN_FIRST" = true ] && rm -rf "$NPM_CLOSURE_DIR"
+                [ "$CLEAN_FIRST" = true ] && rm -rf "$NPM_CLOSURE_DIR" "$NPM_CACHE_DIR"
                 step "安装 npm 生产闭包 (@deepseek-ai/dsh@$NPM_DSH_VERSION)..."
                 npm install "@deepseek-ai/dsh@$NPM_DSH_VERSION" --omit=dev --no-audit --no-fund \
                     --prefix "$NPM_CLOSURE_DIR" \
+                    --cache "$NPM_CACHE_DIR" \
                     || fail "npm install @deepseek-ai/dsh@$NPM_DSH_VERSION 失败（registry 不可达？）"
+                # 修复已发布 npm 包的已知问题：@deepseek-ai/dsh-settings@0.1.2-alpha.2
+                # 缺少 settingsNamespace / installSettingsSection 导出，用本地构建产物覆盖
+                local PATCHED_SETTINGS="$NPM_CLOSURE_DIR/node_modules/@deepseek-ai/dsh-settings/lib/index.js"
+                if [ -f "$PATCHED_SETTINGS" ] && ! grep -q "settingsNamespace" "$PATCHED_SETTINGS" 2>/dev/null; then
+                    step "修补 @deepseek-ai/dsh-settings 缺失导出..."
+                    cp "$PROJECT_ROOT/packages/settings/settings/lib/index.js" "$PATCHED_SETTINGS" \
+                        || fail "修补 dsh-settings 失败"
+                    info "已用本地构建产物替换 stale 发布版本"
+                fi
                 info "npm 闭包已安装"
             fi
             ;;
