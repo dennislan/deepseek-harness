@@ -1,6 +1,6 @@
 # Cookbook: Build an OA Leave Request Plugin
 
-[中文](./oa-leave-plugin.zh.md) | English
+English | [中文](oa-leave-plugin.zh.md)
 
 This tutorial walks you through building a complete DeepSeek Harness plugin that integrates with an OA (Office Automation) system for leave request management. It covers tool definition, configuration validation, HTTP calls, UI cards, event logging, bundling, and installation — each step with copy-ready code.
 
@@ -281,7 +281,7 @@ export function apply(ctx: Context, config: Config) {
       ],
     },
     async execute(_args, exec) {
-      return oafetch(config.oaBaseUrl, '/api/leave/types', {
+      return oafetch<{ types?: { code?: string; name?: string; maxDays?: number }[] }>(config.oaBaseUrl, '/api/leave/types', {
         token: config.oaToken,
         timeoutMs: config.timeoutMs,
         signal: exec.signal,
@@ -298,7 +298,7 @@ export function apply(ctx: Context, config: Config) {
       leaveType: { type: 'string', required: true, description: 'Leave type code, e.g. "annual"' },
       startDate: { type: 'string', required: true, description: 'Start date YYYY-MM-DD' },
       endDate: { type: 'string', required: true, description: 'End date YYYY-MM-DD' },
-      reason: { type: 'string', required: false, description: 'Optional reason' },
+      reason: { type: 'string', description: 'Optional reason' },
     },
     output: {
       schema: {
@@ -316,7 +316,7 @@ export function apply(ctx: Context, config: Config) {
       ],
     },
     async execute(args, exec) {
-      return oafetch(config.oaBaseUrl, '/api/leave/submit', {
+      return oafetch<{ requestId?: string; status?: string; message?: string }>(config.oaBaseUrl, '/api/leave/submit', {
         method: 'POST',
         token: config.oaToken,
         body: {
@@ -355,7 +355,7 @@ export function apply(ctx: Context, config: Config) {
       ],
     },
     async execute(args, exec) {
-      return oafetch(config.oaBaseUrl, `/api/leave/${args.requestId}/status`, {
+      return oafetch<{ requestId?: string; status?: 'cancelled' | 'pending' | 'approved' | 'rejected'; approver?: string; updatedAt?: string }>(config.oaBaseUrl, `/api/leave/${args.requestId}/status`, {
         token: config.oaToken,
         timeoutMs: config.timeoutMs,
         signal: exec.signal,
@@ -374,11 +374,11 @@ interface OafetchOptions {
   body?: unknown
 }
 
-async function oafetch(
+async function oafetch<T>(
   baseUrl: string,
   path: string,
   opts: OafetchOptions,
-): Promise<unknown> {
+): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs)
   const signal = opts.signal
@@ -392,7 +392,7 @@ async function oafetch(
         Authorization: `Bearer ${opts.token}`,
         'Content-Type': 'application/json',
       },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      body: opts.body ? JSON.stringify(opts.body) : null,
       signal,
     })
 
@@ -401,33 +401,34 @@ async function oafetch(
       throw new Error(`OA API error ${res.status}: ${text}`)
     }
 
-    return res.json() as Promise<unknown>
+    return res.json() as Promise<T>
   } finally {
     clearTimeout(timeout)
   }
 }
 
-function mergeSignals(a: AbortSignal, b: AbortSignal): AbortController {
+function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
   const c = new AbortController()
   if (a.aborted) c.abort()
   if (b.aborted) c.abort()
   a.addEventListener('abort', () => c.abort(), { once: true })
   b.addEventListener('abort', () => c.abort(), { once: true })
-  return c
+  return c.signal
 }
 
 // ─── render helpers ────────────────────────────────────────────────────────
 
 function buildLeaveTypesText(
-  value: { types: { code: string; name: string; maxDays: number }[] },
+  value: { types?: { code?: string; name?: string; maxDays?: number }[] },
 ): string {
-  return `Available leave types:\n${value.types
+  const types = value.types ?? []
+  return `Available leave types:\n${types
     .map(t => `  - ${t.code}: ${t.name} (max ${t.maxDays} days)`)
     .join('\n')}`
 }
 
 function buildSubmitResultText(
-  value: { requestId: string; status: string; message?: string },
+  value: { requestId?: string; status?: string; message?: string },
 ): string {
   const lines = [
     `Leave request submitted.`,
@@ -439,7 +440,7 @@ function buildSubmitResultText(
 }
 
 function buildStatusText(
-  value: { requestId: string; status: string; approver?: string; updatedAt?: string },
+  value: { requestId?: string; status?: 'cancelled' | 'pending' | 'approved' | 'rejected'; approver?: string; updatedAt?: string },
 ): string {
   const lines = [`Request ${value.requestId}: ${value.status}`]
   if (value.approver) lines.push(`  Approver: ${value.approver}`)
@@ -458,7 +459,7 @@ function buildStatusText(
 
 For `submit_leave` and `query_leave_status`, use `generic` cards with titles:
 
-```ts
+```ts ignore-check
 output: {
   // ... schema and render ...
   presentCall(args) {
@@ -478,7 +479,7 @@ output: {
 
 For `list_leave_types`:
 
-```ts
+```ts ignore-check
 presentCall() {
   return { card: 'generic', title: 'List Leave Types', kind: 'read' }
 },
@@ -574,7 +575,7 @@ oa-leave-plugin/
 }
 ```
 
-> **Important**: `@deepseek-ai/cordis` must be in `peerDependencies`; `schemastery` is a runtime validator, so it goes in `dependencies`.
+> **Important**: `@deepseek-ai/cordis` must be in `peerDependencies`; `@deepseek-ai/schemastery` is a runtime validator, so it goes in `dependencies`.
 
 `cordis.patch.yml` (note: `name` uses the package name, not a relative path):
 

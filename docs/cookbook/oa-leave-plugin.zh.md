@@ -1,6 +1,6 @@
 # Cookbook：开发一个请假工具对接 OA 系统
 
-[English](../user/develop/plugin-dev-tutorial.md) | 中文
+[English](oa-leave-plugin.md) | 中文
 
 本教程以"请假工具对接 OA 系统"为完整示例，从零开始，逐步覆盖插件开发的全部关键模式：工具定义、配置校验、HTTP 调用、UI 卡片渲染、事件监听、后台任务、打包与安装。每一步的代码均可直接复制运行；完成全部步骤后，你将拥有一个可以在 DeepSeek Harness Web UI 上正常工作的请假工具插件。
 
@@ -41,10 +41,10 @@ mkdir -p oa-leave-plugin/src
 ```
 oa-leave-plugin/
 ├── package.json
-├── cordis.patch.yml   # 开发阶段：本地 patch（Step 1~6 用）
-├── dist/              # 打包产出（Step 7 生成）
+├── cordis.patch.yml   # dev-stage patch (Steps 1–6)
+├── dist/              # build output (Step 7)
 └── src/
-    └── index.ts       # 插件主入口
+    └── index.ts       # main plugin entry
 ```
 
 ---
@@ -98,12 +98,12 @@ export function apply(ctx: Context) {
       ],
     },
     async execute() {
-      // 模拟响应：Step 4 会替换为真实 OA 调用
+      // Simulated response: Step 4 replaces this with a real OA call
       return {
         types: [
-          { code: 'annual', name: '年假', maxDays: 15 },
-          { code: 'sick', name: '病假', maxDays: 30 },
-          { code: 'personal', name: '事假', maxDays: 5 },
+          { code: 'annual', name: 'Annual Leave', maxDays: 15 },
+          { code: 'sick', name: 'Sick Leave', maxDays: 30 },
+          { code: 'personal', name: 'Personal Leave', maxDays: 5 },
         ],
       }
     },
@@ -200,7 +200,7 @@ export function apply(ctx: Context, config: Config) {
   }))
 }
 
-// 真实 OA 调用在 Step 4 实现
+// Real OA call implemented in Step 4
 async function fetchLeaveTypes(
   baseUrl: string,
   token: string,
@@ -251,7 +251,7 @@ export const Config = Schema.object({
 })
 
 export function apply(ctx: Context, config: Config) {
-  // ── list_leave_types ──────────────────────────────────────────────────────
+  // ── list_leave_types ─────────────────────────────────────────────────────
   ctx.tools.register(defineTool({
     name: 'list_leave_types',
     description:
@@ -279,14 +279,11 @@ export function apply(ctx: Context, config: Config) {
         additionalProperties: false,
       },
       render: (_args, value) => [
-        {
-          type: 'text',
-          text: buildLeaveTypesText(value),
-        },
+        { type: 'text', text: buildLeaveTypesText(value) },
       ],
     },
     async execute(_args, exec) {
-      return oafetch(config.oaBaseUrl, `/api/leave/types`, {
+      return oafetch<{ types?: { code?: string; name?: string; maxDays?: number }[] }>(config.oaBaseUrl, '/api/leave/types', {
         token: config.oaToken,
         timeoutMs: config.timeoutMs,
         signal: exec.signal,
@@ -294,32 +291,16 @@ export function apply(ctx: Context, config: Config) {
     },
   }))
 
-  // ── submit_leave ──────────────────────────────────────────────────────────
+  // ── submit_leave ─────────────────────────────────────────────────────────
   ctx.tools.register(defineTool({
     name: 'submit_leave',
     description:
       'Submit a leave request to the OA system. Requires leaveType (from list_leave_types), startDate, endDate, and reason.',
     parameters: {
-      leaveType: {
-        type: 'string',
-        required: true,
-        description: 'Leave type code, e.g. "annual", "sick", "personal"',
-      },
-      startDate: {
-        type: 'string',
-        required: true,
-        description: 'Start date in YYYY-MM-DD format',
-      },
-      endDate: {
-        type: 'string',
-        required: true,
-        description: 'End date in YYYY-MM-DD format',
-      },
-      reason: {
-        type: 'string',
-        required: false,
-        description: 'Optional reason for the leave',
-      },
+      leaveType: { type: 'string', required: true, description: 'Leave type code, e.g. "annual"' },
+      startDate: { type: 'string', required: true, description: 'Start date YYYY-MM-DD' },
+      endDate: { type: 'string', required: true, description: 'End date YYYY-MM-DD' },
+      reason: { type: 'string', description: 'Optional reason' },
     },
     output: {
       schema: {
@@ -333,14 +314,11 @@ export function apply(ctx: Context, config: Config) {
         additionalProperties: false,
       },
       render: (_args, value) => [
-        {
-          type: 'text',
-          text: buildSubmitResultText(value),
-        },
+        { type: 'text', text: buildSubmitResultText(value) },
       ],
     },
     async execute(args, exec) {
-      return oafetch(config.oaBaseUrl, '/api/leave/submit', {
+      return oafetch<{ requestId?: string; status?: string; message?: string }>(config.oaBaseUrl, '/api/leave/submit', {
         method: 'POST',
         token: config.oaToken,
         body: {
@@ -355,27 +333,19 @@ export function apply(ctx: Context, config: Config) {
     },
   }))
 
-  // ── query_leave_status ────────────────────────────────────────────────────
+  // ── query_leave_status ───────────────────────────────────────────────────
   ctx.tools.register(defineTool({
     name: 'query_leave_status',
-    description:
-      'Query the approval status of a leave request by its request ID.',
+    description: 'Query the approval status of a leave request by its request ID.',
     parameters: {
-      requestId: {
-        type: 'string',
-        required: true,
-        description: 'The request ID returned by submit_leave',
-      },
+      requestId: { type: 'string', required: true, description: 'Request ID from submit_leave' },
     },
     output: {
       schema: {
         type: 'object',
         properties: {
           requestId: { type: 'string' },
-          status: {
-            type: 'string',
-            enum: ['pending', 'approved', 'rejected', 'cancelled'],
-          },
+          status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'cancelled'] },
           approver: { type: 'string' },
           updatedAt: { type: 'string' },
         },
@@ -383,14 +353,11 @@ export function apply(ctx: Context, config: Config) {
         additionalProperties: false,
       },
       render: (_args, value) => [
-        {
-          type: 'text',
-          text: buildStatusText(value),
-        },
+        { type: 'text', text: buildStatusText(value) },
       ],
     },
     async execute(args, exec) {
-      return oafetch(config.oaBaseUrl, `/api/leave/${args.requestId}/status`, {
+      return oafetch<{ requestId?: string; status?: 'cancelled' | 'pending' | 'approved' | 'rejected'; approver?: string; updatedAt?: string }>(config.oaBaseUrl, `/api/leave/${args.requestId}/status`, {
         token: config.oaToken,
         timeoutMs: config.timeoutMs,
         signal: exec.signal,
@@ -399,7 +366,7 @@ export function apply(ctx: Context, config: Config) {
   }))
 }
 
-// ─── OA HTTP 客户端 ─────────────────────────────────────────────────────────
+// ─── OA HTTP client ────────────────────────────────────────────────────────
 
 interface OafetchOptions {
   token: string
@@ -409,11 +376,11 @@ interface OafetchOptions {
   body?: unknown
 }
 
-async function oafetch(
+async function oafetch<T>(
   baseUrl: string,
   path: string,
   opts: OafetchOptions,
-): Promise<unknown> {
+): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs)
   const signal = opts.signal
@@ -427,7 +394,7 @@ async function oafetch(
         Authorization: `Bearer ${opts.token}`,
         'Content-Type': 'application/json',
       },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      body: opts.body ? JSON.stringify(opts.body) : null,
       signal,
     })
 
@@ -436,41 +403,46 @@ async function oafetch(
       throw new Error(`OA API error ${res.status}: ${text}`)
     }
 
-    return res.json() as Promise<unknown>
+    return res.json() as Promise<T>
   } finally {
     clearTimeout(timeout)
   }
 }
 
-function mergeSignals(a: AbortSignal, b: AbortSignal): AbortController {
+function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
   const c = new AbortController()
   if (a.aborted) c.abort()
   if (b.aborted) c.abort()
   a.addEventListener('abort', () => c.abort(), { once: true })
   b.addEventListener('abort', () => c.abort(), { once: true })
-  return c
+  return c.signal
 }
 
-// ─── render 辅助函数 ────────────────────────────────────────────────────────
+// ─── render helpers ────────────────────────────────────────────────────────
 
 function buildLeaveTypesText(
-  value: { types: { code: string; name: string; maxDays: number }[] },
+  value: { types?: { code?: string; name?: string; maxDays?: number }[] },
 ): string {
-  return `Available leave types:\n${value.types
+  const types = value.types ?? []
+  return `Available leave types:\n${types
     .map(t => `  - ${t.code}: ${t.name} (max ${t.maxDays} days)`)
     .join('\n')}`
 }
 
 function buildSubmitResultText(
-  value: { requestId: string; status: string; message?: string },
+  value: { requestId?: string; status?: string; message?: string },
 ): string {
-  const lines = [`Leave request submitted.`, `  Request ID: ${value.requestId}`, `  Status: ${value.status}`]
+  const lines = [
+    `Leave request submitted.`,
+    `  Request ID: ${value.requestId}`,
+    `  Status: ${value.status}`,
+  ]
   if (value.message) lines.push(`  Note: ${value.message}`)
   return lines.join('\n')
 }
 
 function buildStatusText(
-  value: { requestId: string; status: string; approver?: string; updatedAt?: string },
+  value: { requestId?: string; status?: 'cancelled' | 'pending' | 'approved' | 'rejected'; approver?: string; updatedAt?: string },
 ): string {
   const lines = [`Request ${value.requestId}: ${value.status}`]
   if (value.approver) lines.push(`  Approver: ${value.approver}`)
@@ -491,11 +463,9 @@ function buildStatusText(
 
 在 `defineTool` 中增加 `output` 的展示方法：
 
-```ts
-// submit_leave 的 output 改为：
+```ts ignore-check
 output: {
-  schema: { /* ... */ },
-  render: (_args, value) => [{ type: 'text', text: buildSubmitResultText(value) }],
+  // ... schema and render ...
   presentCall(args) {
     return {
       card: 'generic',
@@ -506,18 +476,14 @@ output: {
   },
   presentResult(_args, { content }) {
     const text = content[0]?.type === 'text' ? content[0].text : ''
-    return {
-      card: 'generic',
-      title: 'Leave Request Submitted',
-      content: text,
-    }
+    return { card: 'generic', title: 'Leave Request Submitted', content: text }
   },
 }
 ```
 
 `list_leave_types` 的 `presentCall` 可以简化为：
 
-```ts
+```ts ignore-check
 presentCall() {
   return { card: 'generic', title: 'List Leave Types', kind: 'read' }
 },
@@ -542,7 +508,7 @@ presentResult(_args, { content }) {
 
 ```ts
 import type { Context } from '@deepseek-ai/cordis'
-import '@deepseek-ai/dsh-tools'   // 引入类型声明，使 'tools/result' 有类型
+import '@deepseek-ai/dsh-tools'   // import type declarations so 'tools/result' is typed
 
 export const name = 'oa-leave-logger'
 export const inject = ['tools']
@@ -585,8 +551,8 @@ export function apply(ctx: Context) {
 ```
 oa-leave-plugin/
 ├── package.json
-├── cordis.patch.yml       # bundle 入口：告诉 harness 加载哪个模块
-└── index.js               # 插件代码（构建产物或手写 JS）
+├── cordis.patch.yml       # bundle entry point
+└── index.js               # plugin code (build artifact or handwritten JS)
 ```
 
 `package.json`：
@@ -613,7 +579,7 @@ oa-leave-plugin/
 }
 ```
 
-> **重要**：`peerDependencies` 中必须包含 `@deepseek-ai/cordis`；`schemastery` 是运行时校验器，放 `dependencies`。
+> **重要**：`peerDependencies` 中必须包含 `@deepseek-ai/cordis`；`@deepseek-ai/schemastery` 是运行时校验器，放 `dependencies`。
 
 `index.js`（从 `src/index.ts` 编译后的产物；开发期也可以直接写 `.js`，见下方完整内容）：
 
@@ -627,6 +593,8 @@ oa-leave-plugin/
         oaBaseUrl: 'https://oa.example.com'
         oaToken: '${DSH_OA_TOKEN}'
         timeoutMs: 10000
+    - id: oa-leave-logger
+      name: dsh-oa-leave/logger
 ```
 
 `{${DSH_OA_TOKEN}}` 是 Loader 的环境变量插值语法（`!!js` 表达式），部署时由环境变量注入，不写入配置文件。
@@ -636,21 +604,19 @@ oa-leave-plugin/
 ## Step 8：安装并运行
 
 ```sh
-# 初始化 demo profile（首次）并安装包
+# Initialize demo profile (first time) and install the bundle
 dsh plugin --profile demo add ./oa-leave-plugin
 
-# 验证层已安装
+# Verify the layer is installed
 dsh --profile demo --dump-config | grep -A5 'oa-leave'
 
-# 启动
+# Start
 dsh --profile demo
 ```
 
 打开浏览器，发送以下消息验证：
 
-```
-我想请3天年假，从2025-09-01到2025-09-03，理由是回老家办事。
-```
+> 我想请3天年假，从2025-09-01到2025-09-03，理由是回老家办事。
 
 模型会依次调用 `list_leave_types` → `submit_leave`，你将看到工具卡片和执行结果。
 
@@ -660,261 +626,7 @@ dsh --profile demo
 
 ### `src/index.ts`（开发阶段）
 
-```ts
-import type { Context } from '@deepseek-ai/cordis'
-import Schema from '@deepseek-ai/schemastery'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-
-export const name = 'oa-leave'
-
-export interface Config {
-  oaBaseUrl: string
-  oaToken: string
-  timeoutMs: number
-}
-
-export const Config = Schema.object({
-  oaBaseUrl: Schema.string().required(),
-  oaToken: Schema.string().required(),
-  timeoutMs: Schema.number().default(10000),
-})
-
-export function apply(ctx: Context, config: Config) {
-  ctx.tools.register(defineTool({
-    name: 'list_leave_types',
-    description:
-      'List available leave types from the OA system. Call this first when the user wants to apply for leave.',
-    parameters: {},
-    output: {
-      schema: {
-        type: 'object',
-        properties: {
-          types: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                code: { type: 'string' },
-                name: { type: 'string' },
-                maxDays: { type: 'number' },
-              },
-              required: ['code', 'name', 'maxDays'],
-              additionalProperties: false,
-            },
-          },
-        },
-        required: ['types'],
-        additionalProperties: false,
-      },
-      render: (_args, value) => [
-        { type: 'text', text: buildLeaveTypesText(value) },
-      ],
-      presentCall() {
-        return { card: 'generic', title: 'List Leave Types', kind: 'read' }
-      },
-      presentResult(_args, { content }) {
-        return {
-          card: 'generic',
-          content: content[0]?.type === 'text' ? content[0].text : '',
-        }
-      },
-    },
-    async execute(_args, exec) {
-      return oafetch(config.oaBaseUrl, '/api/leave/types', {
-        token: config.oaToken,
-        timeoutMs: config.timeoutMs,
-        signal: exec.signal,
-      })
-    },
-  }))
-
-  ctx.tools.register(defineTool({
-    name: 'submit_leave',
-    description:
-      'Submit a leave request to the OA system. Requires leaveType (from list_leave_types), startDate, endDate, and optional reason.',
-    parameters: {
-      leaveType: { type: 'string', required: true, description: 'Leave type code, e.g. "annual"' },
-      startDate: { type: 'string', required: true, description: 'Start date YYYY-MM-DD' },
-      endDate: { type: 'string', required: true, description: 'End date YYYY-MM-DD' },
-      reason: { type: 'string', required: false, description: 'Optional reason' },
-    },
-    output: {
-      schema: {
-        type: 'object',
-        properties: {
-          requestId: { type: 'string' },
-          status: { type: 'string' },
-          message: { type: 'string' },
-        },
-        required: ['requestId', 'status'],
-        additionalProperties: false,
-      },
-      render: (_args, value) => [
-        { type: 'text', text: buildSubmitResultText(value) },
-      ],
-      presentCall(args) {
-        return {
-          card: 'generic',
-          title: 'Submit Leave Request',
-          kind: 'write',
-          rawInput: args,
-        }
-      },
-      presentResult(_args, { content }) {
-        return {
-          card: 'generic',
-          title: 'Leave Request Submitted',
-          content: content[0]?.type === 'text' ? content[0].text : '',
-        }
-      },
-    },
-    async execute(args, exec) {
-      return oafetch(config.oaBaseUrl, '/api/leave/submit', {
-        method: 'POST',
-        token: config.oaToken,
-        body: {
-          leaveType: args.leaveType,
-          startDate: args.startDate,
-          endDate: args.endDate,
-          reason: args.reason ?? '',
-        },
-        timeoutMs: config.timeoutMs,
-        signal: exec.signal,
-      })
-    },
-  }))
-
-  ctx.tools.register(defineTool({
-    name: 'query_leave_status',
-    description: 'Query the approval status of a leave request by its request ID.',
-    parameters: {
-      requestId: { type: 'string', required: true, description: 'Request ID from submit_leave' },
-    },
-    output: {
-      schema: {
-        type: 'object',
-        properties: {
-          requestId: { type: 'string' },
-          status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'cancelled'] },
-          approver: { type: 'string' },
-          updatedAt: { type: 'string' },
-        },
-        required: ['requestId', 'status'],
-        additionalProperties: false,
-      },
-      render: (_args, value) => [
-        { type: 'text', text: buildStatusText(value) },
-      ],
-      presentCall(args) {
-        return {
-          card: 'generic',
-          title: 'Query Leave Status',
-          kind: 'read',
-          rawInput: args,
-        }
-      },
-      presentResult(_args, { content }) {
-        return {
-          card: 'generic',
-          title: 'Leave Status',
-          content: content[0]?.type === 'text' ? content[0].text : '',
-        }
-      },
-    },
-    async execute(args, exec) {
-      return oafetch(config.oaBaseUrl, `/api/leave/${args.requestId}/status`, {
-        token: config.oaToken,
-        timeoutMs: config.timeoutMs,
-        signal: exec.signal,
-      })
-    },
-  }))
-}
-
-// ─── HTTP 客户端 ────────────────────────────────────────────────────────────
-
-interface OafetchOptions {
-  token: string
-  timeoutMs: number
-  signal?: AbortSignal
-  method?: 'GET' | 'POST'
-  body?: unknown
-}
-
-async function oafetch(
-  baseUrl: string,
-  path: string,
-  opts: OafetchOptions,
-): Promise<unknown> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs)
-
-  const signal = opts.signal
-    ? mergeSignals(opts.signal, controller.signal)
-    : controller.signal
-
-  try {
-    const res = await fetch(`${baseUrl}${path}`, {
-      method: opts.method ?? 'GET',
-      headers: {
-        Authorization: `Bearer ${opts.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-      signal,
-    })
-
-    if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`OA API error ${res.status}: ${text}`)
-    }
-
-    return res.json() as Promise<unknown>
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-function mergeSignals(a: AbortSignal, b: AbortSignal): AbortController {
-  const c = new AbortController()
-  if (a.aborted) c.abort()
-  if (b.aborted) c.abort()
-  a.addEventListener('abort', () => c.abort(), { once: true })
-  b.addEventListener('abort', () => c.abort(), { once: true })
-  return c
-}
-
-// ─── render 辅助 ────────────────────────────────────────────────────────────
-
-function buildLeaveTypesText(
-  value: { types: { code: string; name: string; maxDays: number }[] },
-): string {
-  return `Available leave types:\n${value.types
-    .map(t => `  - ${t.code}: ${t.name} (max ${t.maxDays} days)`)
-    .join('\n')}`
-}
-
-function buildSubmitResultText(
-  value: { requestId: string; status: string; message?: string },
-): string {
-  const lines = [
-    `Leave request submitted.`,
-    `  Request ID: ${value.requestId}`,
-    `  Status: ${value.status}`,
-  ]
-  if (value.message) lines.push(`  Note: ${value.message}`)
-  return lines.join('\n')
-}
-
-function buildStatusText(
-  value: { requestId: string; status: string; approver?: string; updatedAt?: string },
-): string {
-  const lines = [`Request ${value.requestId}: ${value.status}`]
-  if (value.approver) lines.push(`  Approver: ${value.approver}`)
-  if (value.updatedAt) lines.push(`  Updated: ${value.updatedAt}`)
-  return lines.join('\n')
-}
-```
+*（与 Step 4 中展示的完整代码相同。）*
 
 ### `src/logger.ts`
 

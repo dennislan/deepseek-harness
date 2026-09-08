@@ -16,7 +16,7 @@ struct ContentView: View {
             content
         }
         .onAppear {
-            // Listen for status changes
+            // Listen for status changes - only for status text and failure handling
             statusObserver = NotificationCenter.default.addObserver(
                 forName: DshServer.statusChanged,
                 object: nil,
@@ -25,17 +25,13 @@ struct ContentView: View {
                 Task { @MainActor in
                     let s = await server.status
                     statusText = await server.statusText
-                    if s == .running {
-                        let u = await server.url
-                        displayURL = u
-                        isReady = (u != nil)
-                    } else if case .failed = s {
-                        // Keep showing the error in statusText
+                    if case .failed = s {
                         isReady = false
+                        displayURL = nil
                     }
                 }
             }
-            // Listen for URL changes (more direct)
+            // Listen for URL changes - this is the ONLY place that loads the WebView
             urlObserver = NotificationCenter.default.addObserver(
                 forName: DshServer.urlChanged,
                 object: nil,
@@ -43,6 +39,7 @@ struct ContentView: View {
             ) { _ in
                 Task { @MainActor in
                     let u = await server.url
+                    NSLog("[DSH] urlChanged notification received, url=\(u?.absoluteString ?? "nil")")
                     displayURL = u
                     isReady = (u != nil)
                 }
@@ -100,8 +97,6 @@ struct WebViewContainer: NSViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
-        // createWebViewWithConfiguration（target="_blank" / window.open 等）属于 WKUIDelegate，
-        // 不设置则外部新窗口链接不会触发，导致点击无反应。
         webView.uiDelegate = context.coordinator
         bridge.webView = webView
 
@@ -139,11 +134,14 @@ struct WebViewContainer: NSViewRepresentable {
         config.userContentController.addUserScript(
             WKUserScript(source: bridgeJS, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         )
+        NSLog("[DSH] WebViewContainer.makeNSView with url=\(url.absoluteString)")
         return webView
     }
 
     func updateNSView(_ nsView: WKWebView, context: Context) {
+        NSLog("[DSH] WebViewContainer.updateNSView url=\(url.absoluteString) current=\(nsView.url?.absoluteString ?? "nil")")
         if nsView.url?.absoluteString != url.absoluteString {
+            NSLog("[DSH] Loading URL: \(url.absoluteString)")
             nsView.load(URLRequest(url: url))
         }
     }

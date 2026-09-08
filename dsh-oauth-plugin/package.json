@@ -67,7 +67,7 @@
     "@deepseek-ai/dsh-invariants": "latest",
     "@deepseek-ai/dsh-home-paths": "latest",
     "@deepseek-ai/dsh-session": "latest",
-    "schemastery": "latest",
+    "@deepseek-ai/schemastery": "latest",
     "@types/node": "^22.0.0",
     "typescript": "^5.0.0"
   }

@@ -1,6 +1,6 @@
 # DeepSeek Harness Plugin Development Tutorial
 
-[中文](./plugin-dev-tutorial.zh.md) | English
+English | [中文](plugin-dev-tutorial.zh.md)
 
 This tutorial takes you from zero to a fully installed plugin in DeepSeek Harness. Each step is runnable as-is; by the end you will have a plugin with tools, configuration, hot reload, and formal bundle installation.
 
@@ -86,6 +86,8 @@ The plugin loaded successfully. Press `Ctrl+C` to stop the server.
 If your plugin needs an existing Harness service (e.g., the tool registry `tools`, or the LLM service `llm`), declare it with `inject`. The framework guarantees all declared services are ready before calling your `apply`:
 
 ```ts
+import type { Context } from '@deepseek-ai/cordis'
+
 export const name = 'my-tool-plugin'
 export const inject = ['tools']   // declare dependency
 

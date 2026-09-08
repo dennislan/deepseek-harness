@@ -1,17 +1,19 @@
 # dsh-oauth
 
-OAuth / login plugin for DeepSeek Harness. 支持用户名密码登录和微信网站应用（WeChat Website App）扫码登录，会话按用户隔离。
+English | [中文](README.zh.md)
 
-## 特性
+OAuth / login plugin for DeepSeek Harness. Supports username/password login and WeChat Website App (微信网站应用) QR-code login; sessions are isolated per user.
 
-- **用户名密码登录** — 调用远程 auth API 验证，通过后进入主界面。
-- **微信网站应用扫码登录** — 按微信官方 OAuth2.0 流程：加载官方 `wxLogin.js` 渲染二维码，扫码确认后由微信回调完成登录。
-- **模式切换** — 表单右上角 WeChat / 账号图标可切换两种登录方式。
-- **会话与工作区按用户隔离** — 认证后新建的会话与所选工作区自动关联当前 userId 并持久化；服务端与客户端双层过滤，未登录用户看不到任何会话或工作区。
-- **高品质登录 UI** — 全屏分割布局：左侧动态渐变品牌面板，右侧简洁表单卡片。
-- **侧边栏用户徽章** — 登录后用户名显示在左侧导航「设定」栏位置（用户名居左、齿轮图标居右），点击用户名可直接退出登录；侧边栏折叠为窄轨时徽章自动隐藏。
+## Features
 
-## 安装
+- **Username/password login** — validated against a remote auth API; on success the user enters the main UI.
+- **WeChat Website App QR-code login** — follows the official WeChat OAuth 2.0 flow: the official `wxLogin.js` renders the QR code, and WeChat's callback completes login after the user confirms.
+- **Mode switching** — the WeChat / account icon in the top-right corner of the form switches between the two login methods.
+- **Sessions and workspaces isolated per user** — sessions and workspaces created after authentication are automatically associated with the current `userId` and persisted; two-layer filtering on the server and client means a logged-out user sees no sessions or workspaces at all.
+- **High-quality login UI** — full-screen split layout: an animated gradient brand panel on the left, a clean form card on the right.
+- **Sidebar user badge** — after login the username shows in the "Settings" slot of the left navigation (username left, gear icon right); clicking the username signs out directly. The badge hides automatically when the sidebar collapses into the narrow rail.
+
+## Installation
 
 ```bash
 # 从本地路径安装（开发中）
@@ -21,9 +23,9 @@ dsh plugin --profile web add /path/to/dsh-oauth-plugin
 dsh plugin --profile web add dsh-oauth
 ```
 
-## 配置
+## Configuration
 
-在 `~/.dsh/profiles/web/cordis.patch.yml` 中启用：
+Enable it in `~/.dsh/profiles/web/cordis.patch.yml`:
 
 ```yaml
 # 启用密码登录 + 微信网站应用扫码登录
@@ -39,114 +41,114 @@ dsh plugin --profile web add dsh-oauth
     wechatFastLogin: true          # 微信快速登录，默认 true
 ```
 
-微信扫码登录要求：
+Requirements for WeChat QR login:
 
-1. 在[微信开放平台](https://open.weixin.qq.com/)注册**网站应用**，获取 `AppID` / `AppSecret`。
-2. 将 `wechatRedirectUri` 的域名加入该应用的**授权回调域**（开发时可填 `127.0.0.1`）。
-3. 填入上述配置后重启 harness；登录 UI 的微信模式会加载官方 `wxLogin.js` 渲染二维码。
+1. Register a **Website App** (网站应用) on the [WeChat Open Platform](https://open.weixin.qq.com/) and obtain the `AppID` / `AppSecret`.
+2. Add the domain of `wechatRedirectUri` to the app's **authorized callback domains** (授权回调域) (in development you can use `127.0.0.1`).
+3. After filling in the configuration above, restart the harness; the WeChat mode of the login UI loads the official `wxLogin.js` and renders the QR code.
 
-## 登录 UI
+## Login UI
 
-插件激活后，首次打开 harness 会看到全屏登录遮罩：
+Once the plugin is active, the first time you open the harness you see a full-screen login overlay:
 
-**左半屏**（深色，约 44%）：
-- 蓝→紫→绿三色调渐变 mesh 动画（缓慢漂移）
-- 点阵网格叠加径向遮罩
-- 浮动 Logo 标记（带勾选符号）
-- 品牌标题与标语
+**Left half** (dark, about 44%):
+- Three-color blue→purple→green gradient mesh animation (slow drift)
+- Dot-grid overlay with a radial mask
+- Floating logo mark (with a check glyph)
+- Brand title and tagline
 
-**右半屏**（浅色，约 56%）：
-- 标题 + 副标题
-- 错误提示横幅（红色带图标）
-- 登录表单（密码模式）或 QR 码（微信模式）
-- 底部版权文字
+**Right half** (light, about 56%):
+- Title + subtitle
+- Error banner (red, with icon)
+- Login form (password mode) or QR code (WeChat mode)
+- Copyright line at the bottom
 
-**切换按钮**（表单面板右上角）：
-- WeChat 气泡图标 → 切换到微信扫码模式
-- 账号轮廓图标 → 切回密码模式
+**Switch buttons** (top-right corner of the form panel):
+- WeChat bubble icon → switch to the WeChat QR mode
+- Account outline icon → switch back to password mode
 
-### 密码模式
+### Password mode
 
-| 字段 | 类型 |
+| Field | Type |
 |------|------|
-| 用户名 | `text` 输入框，`autocomplete="username"` |
-| 密码 | `password` 输入框，`autocomplete="current-password"` |
+| Username | `text` input, `autocomplete="username"` |
+| Password | `password` input, `autocomplete="current-password"` |
 
-提交后调用 `POST /api/auth/login`。
+Submitting calls `POST /api/auth/login`.
 
-### 微信 QR 模式
+### WeChat QR mode
 
-按微信官方网站应用 OAuth2.0 `authorization_code` 流程：
+Follows the official WeChat Website App OAuth 2.0 `authorization_code` flow:
 
-1. 客户端请求 `GET /api/auth/wechat/config`，服务端生成一次性 `state` 并返回 `appId`、`redirectUri`、`scope`。
-2. 客户端动态加载官方 `wxLogin.js`，以 `new WxLogin(...)` 在容器中渲染微信官方二维码 iframe。
-3. 用户扫码确认后，微信将 `code` + `state` 重定向到 `redirectUri`（即 `/api/auth/wechat/callback`）。
-4. 服务端校验 `state`（一次性、防 CSRF、到期作废），用 `code` 向微信换取 `access_token` 与用户信息。
-5. 回调页通过 `postMessage` 把登录结果告知登录遮罩，页面随即刷新进入主界面。
+1. The client requests `GET /api/auth/wechat/config`; the server generates a one-time `state` and returns `appId`, `redirectUri`, and `scope`.
+2. The client dynamically loads the official `wxLogin.js` and renders the official WeChat QR-code iframe in its container via `new WxLogin(...)`.
+3. After the user confirms by scanning, WeChat redirects the `code` + `state` to `redirectUri` (i.e. `/api/auth/wechat/callback`).
+4. The server validates `state` (one-time, CSRF-proof, expired states are rejected), then exchanges the `code` with WeChat for an `access_token` and user info.
+5. The callback page tells the login overlay the result via `postMessage`, and the page reloads into the main UI.
 
-失败或过期时回调页同样通过 `postMessage` 回报错误，遮罩展示错误并允许重新扫码。
+On failure or expiry the callback page likewise reports the error via `postMessage`; the overlay shows it and allows re-scanning.
 
-**微信快速登录**（wechatFastLogin）：
-- 默认启用（`wechatFastLogin: true`）。当用户的微信桌面客户端满足以下条件时，QR 码内会显示快速登录按钮，用户可直接登录而无需扫码：
-  - Windows：微信 3.9.11+
-  - macOS：微信 4.0.0+
-  - 客户端已登录且未锁定
-- 如需禁用，设置 `wechatFastLogin: false`，客户端会向 wxLogin.js 传入 `fast_login: 0` 参数，强制显示完整 QR 码。
-- 快速登录的显示时机由微信官方 iframe 控制，插件仅负责传递开关状态。
+**WeChat fast login** (`wechatFastLogin`):
+- Enabled by default (`wechatFastLogin: true`). When the user's WeChat desktop client meets the conditions below, the QR code shows a fast-login button so the user can log in without scanning:
+  - Windows: WeChat 3.9.11+
+  - macOS: WeChat 4.0.0+
+  - The client is signed in and not locked
+- To disable it, set `wechatFastLogin: false`; the client then passes the `fast_login: 0` parameter to `wxLogin.js`, forcing the full QR code to be shown.
+- When fast login appears is controlled by WeChat's official iframe; the plugin only forwards the flag.
 
-## 配置项
+## Configuration keys
 
-| 键 | 默认 | 说明 |
+| Key | Default | Description |
 |---|---|---|
-| `apiUrl` | *必填* | 远程 auth API 的基址，如 `http://localhost:3000/api/auth` |
-| `loginPath` | `/login` | 密码登录路径（拼接到 apiUrl） |
-| `mePath` | `/me` | 验证当前用户路径 |
-| `logoutPath` | `/logout` | 登出路径 |
-| `sessionMapFile` | `.oauth-sessions.json` | 会话↔用户映射的持久化文件名（位于 `$DSH_HOME/`） |
-| `wechatEnabled` | `false` | 是否启用微信网站应用扫码登录 |
-| `wechatAppId` | `''` | 微信开放平台网站应用 AppID（启用时需要） |
-| `wechatAppSecret` | `''` | 微信开放平台 AppSecret（仅服务端使用，绝不出现在前端） |
-| `wechatRedirectUri` | `''` | 微信 OAuth 回调地址，需在开放平台配置为授权回调域 |
-| `wechatStateTtlMs` | `600000` | 一次性 `state` 有效期（毫秒） |
-| `wechatFastLogin` | `true` | 是否启用微信快速登录（默认 true）；要求微信 3.9.11+（Windows）/ 4.0.0+（macOS）桌面客户端已登录且非锁定 |
+| `apiUrl` | *required* | Base URL of the remote auth API, e.g. `http://localhost:3000/api/auth` |
+| `loginPath` | `/login` | Password login path (appended to `apiUrl`) |
+| `mePath` | `/me` | Path for validating the current user |
+| `logoutPath` | `/logout` | Logout path |
+| `sessionMapFile` | `.oauth-sessions.json` | Persistence file name of the session↔user mapping (under `$DSH_HOME/`) |
+| `wechatEnabled` | `false` | Whether to enable WeChat Website App QR login |
+| `wechatAppId` | `''` | WeChat Open Platform Website App ID (required when enabled) |
+| `wechatAppSecret` | `''` | WeChat Open Platform AppSecret (server-side only, never exposed to the frontend) |
+| `wechatRedirectUri` | `''` | WeChat OAuth callback URL; must be registered as an authorized callback domain on the Open Platform |
+| `wechatStateTtlMs` | `600000` | TTL of the one-time `state` (milliseconds) |
+| `wechatFastLogin` | `true` | Whether to enable WeChat fast login (default true); requires the WeChat 3.9.11+ (Windows) / 4.0.0+ (macOS) desktop client to be signed in and unlocked |
 
-## 远程 API 契约
+## Remote API contract
 
-### 密码登录
+### Password login
 
 **`POST {apiUrl}{loginPath}`**
 
-请求：
+Request:
 ```json
 { "username": "alice", "password": "secret" }
 ```
 
-成功（200）：
+Success (200):
 ```json
 { "user": { "id": "usr_abc123", "displayName": "Alice", "token": "…" }, "expiresIn": 3600 }
 ```
 
-错误（401）：
+Error (401):
 ```json
 { "code": "INVALID_CREDENTIALS", "message": "Invalid username or password" }
 ```
 
-### 当前用户
+### Current user
 
 **`GET {apiUrl}{mePath}`**
 
-成功（200）：`{ "id": "usr_abc123", "displayName": "Alice" }`
-未认证（401）：`{ "error": "unauthorized" }`
+Success (200): `{ "id": "usr_abc123", "displayName": "Alice" }`
+Unauthenticated (401): `{ "error": "unauthorized" }`
 
-### 登出
+### Logout
 
 **`POST {apiUrl}{logoutPath}`** → `{ "ok": true }`
 
-### 微信 OAuth 引导
+### WeChat OAuth bootstrapping
 
 **`GET {origin}/api/auth/wechat/config`**
 
-无参。服务端生成一次性 `state`（有效期 `wechatStateTtlMs`，默认 10 分钟）并返回：
+No parameters. The server generates a one-time `state` (valid for `wechatStateTtlMs`, default 10 minutes) and returns:
 
 ```json
 {
@@ -159,42 +161,42 @@ dsh plugin --profile web add dsh-oauth
 }
 ```
 
-`enabled: false` 表示未配置微信登录，客户端应隐藏微信模式。
+`enabled: false` means WeChat login is not configured; the client should hide the WeChat mode.
 
-### 微信 OAuth 回调
+### WeChat OAuth callback
 
 **`GET {origin}/api/auth/wechat/callback?code=…&state=…`**
 
-微信扫码确认后重定向至此。服务端校验 `state`（不存在/已用/过期均拒绝）后用 `code` 向微信换取 `access_token` 与用户信息，并写入本地会话。回调返回一个 HTML 页面，通过 `postMessage({ type: 'dsh-wechat-login', user })` 把结果告知登录遮罩窗口；失败时 `postMessage({ type: 'dsh-wechat-login', error })`。
+After the WeChat QR scan is confirmed, the user is redirected here. The server validates the `state` (rejecting unknown/used/expired states), exchanges the `code` with WeChat for the `access_token` and user info, and writes the local session. The callback returns an HTML page that tells the login overlay window the result via `postMessage({ type: 'dsh-wechat-login', user })`; on failure it sends `postMessage({ type: 'dsh-wechat-login', error })`.
 
-## 会话与工作区隔离
+## Session and workspace isolation
 
-登录后新建的会话自动将 `sessionId → userId` 写入 `$DSH_HOME/.oauth-sessions.json`，所选工作区（通过 `workspace.create` 建立或复用）自动将 `workspaceId → userId` 写入 `$DSH_HOME/.oauth-workspaces.json`；当前用户身份持久化到 `$DSH_HOME/oauth-user.json`，重启后免登录。三个文件均为普通覆盖写，切换用户后新身份覆盖旧身份。
+After login, a newly created session automatically writes `sessionId → userId` to `$DSH_HOME/.oauth-sessions.json`, and the selected workspace (created or reused via `workspace.create`) automatically writes `workspaceId → userId` to `$DSH_HOME/.oauth-workspaces.json`; the current user's identity is persisted in `$DSH_HOME/oauth-user.json`, so a restart requires no login. All three files use plain overwrite writes; switching users overwrites the previous identity.
 
-隔离在两层强制：
+Isolation is enforced in two layers:
 
-- **服务端** — 插件以 exact route 覆盖 `/api/workspace.list`、`/api/workspace.create`、`/api/session.list` 与 `/api/session.history`：工作区列表按「用户拥有该工作区，或其中至少一个会话属于该用户」保留，共享工作区只返回用户自己的会话 id；会话列表只返回该用户的会话；历史读取非本人会话时按 `session-not-found` 应答（存在性不泄露）；未认证调用者一律返回空列表。`session.search` 基于 `session.list` 的可见性集合授权，随列表过滤自动隔离。
-- **客户端** — 覆盖全局 `fetch` 镜像服务端过滤，避免侧边栏渲染其他用户的会话与工作区。
+- **Server-side** — the plugin registers exact routes overriding `/api/workspace.list`, `/api/workspace.create`, `/api/session.list`, and `/api/session.history`: the workspace list keeps workspaces the user owns or that contain at least one session belonging to the user, and shared workspaces return only the user's own session ids; the session list returns only that user's sessions; history reads of another user's session answer `session-not-found` (existence is not leaked); unauthenticated callers get empty lists. `session.search` is authorized off the `session.list` visibility set and is isolated automatically by the same filter.
+- **Client-side** — overriding the global `fetch` mirrors the server-side filter, so the sidebar never renders other users' sessions and workspaces.
 
-## 不修改 deepseek-harness 源码
+## No changes to the deepseek-harness source
 
-本插件完全独立于 harness 仓库。通过标准 Cordis bundle 机制加载——只需在 profile 中启用即可，无需改动任何 harness 代码。
+This plugin is fully independent of the harness repository. It is loaded through the standard Cordis bundle mechanism — enabling it in the profile is all that's needed; no harness code is modified.
 
-## 非官方扩展点
+## Unofficial extension points
 
-插件依赖以下 harness 未公开承诺的扩展点，升级 harness 后需验证兼容性：
+The plugin relies on the following harness extension points that carry no public commitment; verify compatibility after upgrading the harness:
 
-- **exact route 覆盖** — host 以 exact route 注册 `/api/workspace.list`、`/api/workspace.create`、`/api/session.list` 与 `/api/session.history`，覆盖内置 handler 实现隔离。harness 未提供按用户过滤的官方接口，这是当前唯一的服务端隔离手段。
-- **`window.fetch` 拦截** — 客户端覆盖全局 `fetch`，镜像服务端过滤 `/api/session.list` 与 `/api/workspace.list` 的响应，避免侧边栏渲染未授权内容。
-- **`document.body` 注入** — 登录遮罩直接追加到 `document.body`，未经官方 UI 插槽协议注册。
-- **侧边栏「设定」按钮结构** — 用户名徽章依赖侧边栏设置触发按钮的 DOM 结构（`button[aria-haspopup="dialog"]` 且无 `aria-label`）：徽章作为首个子节点注入，通过 MutationObserver 在 harness 重渲染后自愈，并在窄轨（rail）模式下隐藏。harness 若调整该按钮的标记或布局，徽章注入可能失效。
+- **Exact-route overrides** — the host registers exact routes for `/api/workspace.list`, `/api/workspace.create`, `/api/session.list`, and `/api/session.history`, overriding the built-in handlers to implement isolation. The harness provides no official per-user filtering API; this is currently the only server-side isolation mechanism.
+- **`window.fetch` interception** — the client overrides the global `fetch` and mirrors the server-side filtering of `/api/session.list` and `/api/workspace.list` responses so the sidebar never renders unauthorized content.
+- **`document.body` injection** — the login overlay is appended directly to `document.body`, not registered through the official UI slot protocol.
+- **Sidebar "Settings" button structure** — the user badge depends on the DOM structure of the sidebar settings trigger button (`button[aria-haspopup="dialog"]` without an `aria-label`): the badge is injected as the first child, heals itself via a MutationObserver after the harness re-renders, and hides in the narrow-rail mode. If the harness changes that button's markup or layout, the badge injection may stop working.
 
-若 harness 后续提供官方按用户过滤 API 或 UI 扩展点，本插件将优先迁移，不再依赖上述非官方机制。
+If the harness later provides an official per-user filtering API or UI extension points, this plugin will migrate to them first and drop the unofficial mechanisms above.
 
-## 已知限制
+## Known limitations
 
-- 状态文件由单进程独占（`$DSH_HOME/` 下三个 JSON），多个 harness 进程共享同一 `$DSH_HOME` 时写入互相覆盖，未做进程间协调。
-- 除 `session.history` 外，其余直接指定 `sessionId` 的深层会话接口未做服务端守卫；客户端侧边栏已过滤，绕过 UI 的手工调用仍可读取这些接口。
+- The state files are owned by a single process (the three JSON files under `$DSH_HOME/`); multiple harness processes sharing one `$DSH_HOME` overwrite each other's writes — there is no inter-process coordination.
+- Apart from `session.history`, the other deep session endpoints that take an explicit `sessionId` have no server-side guard; the client sidebar filters them, but a manual call bypassing the UI can still read them.
 
 ## License
 

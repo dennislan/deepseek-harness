@@ -1,5 +1,7 @@
 # DeepSeek Harness — macOS Desktop App
 
+English | [中文](README.zh.md)
+
 Native macOS 14+ desktop application built with **Swift + SwiftUI + WKWebView**.
 
 No Electron. No WebView wrapper libraries. Just a thin Swift shell that hosts the existing Harness web UI in a `WKWebView`, with a JS↔Swift bridge for native macOS capabilities.

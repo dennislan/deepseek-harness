@@ -1,6 +1,6 @@
 # DeepSeek Harness 插件开发教程
 
-[English](./plugin-dev-tutorial.md) | 中文
+[English](plugin-dev-tutorial.md) | 中文
 
 本教程从零开始，带你一步步编写一个 DeepSeek Harness 插件，并最终把它安装到 Harness 的 Web UI 上。教程包含可以实际运行的代码；完成全部步骤后，你会拥有一个带工具、配置、热重载和正式安装的完整插件。
 
@@ -27,7 +27,7 @@ import type { Context } from '@deepseek-ai/cordis'
 export const name = 'my-plugin'
 
 export function apply(ctx: Context) {
-  // 在这里注册你贡献的能力
+  // Register your capabilities here
 }
 ```
 
@@ -86,11 +86,13 @@ pnpm dsh web --patch ./scratch-plugin/cordis.yml
 如果你的插件需要使用 harness 已有的服务（例如工具注册表 `tools`、LLM 服务 `llm`），需要声明 `inject`。框架保证在调用你的 `apply` 之前，所有声明的服务都已就绪：
 
 ```ts
+import type { Context } from '@deepseek-ai/cordis'
+
 export const name = 'my-tool-plugin'
-export const inject = ['tools']   // 声明依赖
+export const inject = ['tools']   // declare dependency
 
 export function apply(ctx: Context) {
-  // ctx.tools 现在可用
+  // ctx.tools is now available
   console.log('[my-tool-plugin] tools ready:', typeof ctx.tools)
 }
 ```
@@ -101,7 +103,7 @@ export function apply(ctx: Context) {
 import type { Context } from '@deepseek-ai/cordis'
 
 export const name = 'hello-plugin'
-export const inject = ['tools']   // 依赖 tools 服务
+export const inject = ['tools']   // depends on the tools service
 
 export function apply(ctx: Context) {
   console.log('[hello-plugin] tools service ready:', typeof ctx.tools)
@@ -241,7 +243,7 @@ export function apply(ctx: Context, config: Config) {
 
 ```ts
 import type { Context } from '@deepseek-ai/cordis'
-import '@deepseek-ai/dsh-tools'   // 引入类型声明合并，让 'tools/result' 有类型
+import '@deepseek-ai/dsh-tools'   // import type declarations so 'tools/result' is typed
 
 export const name = 'tool-logger'
 export const inject = ['tools']
@@ -433,10 +435,10 @@ ACTIVE → UNLOADING → DISPOSED
 
 ## 下一步
 
-- [服务与依赖](./framework/service.md) — 让你的插件对外提供服务
-- [事件系统](./framework/events.md) — 插件间松耦合通信
-- [能力分层](./practice/index.md) — Service Definition / Provider / Consumer 三角色设计
-- [添加工具参考](../../cookbook/adding-a-tool.md) — 后台任务、UI 卡片、策略钩子等高级用法
-- [扩展插件形态参考](../../cookbook/extension-cookbook.md) — 钩子、UI、外部协议驱动等模式
+- [服务与依赖](./framework/service.zh.md) — 让你的插件对外提供服务
+- [事件系统](./framework/events.zh.md) — 插件间松耦合通信
+- [能力分层](./practice/index.zh.md) — Service Definition / Provider / Consumer 三角色设计
+- [添加工具参考](../../cookbook/adding-a-tool.zh.md) — 后台任务、UI 卡片、策略钩子等高级用法
+- [扩展插件形态参考](../../cookbook/extension-cookbook.zh.md) — 钩子、UI、外部协议驱动等模式
 
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)

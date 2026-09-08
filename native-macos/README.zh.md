@@ -1,5 +1,7 @@
 # DeepSeek Harness — macOS 桌面应用
 
+[English](README.md) | 中文
+
 原生 macOS 14+ 桌面应用，使用 **Swift + SwiftUI + WKWebView** 构建。
 
 无需 Electron，无需 WebView 封装库。一个轻量 Swift 外壳启动 dsh 子进程，用 `WKWebView` 承载现有 Harness Web UI，并通过 JS↔Swift Bridge 暴露 macOS 原生能力。
@@ -8,9 +10,9 @@
 
 ```
 DeepSeekHarness.app/
-├── Contents/MacOS/DeepSeekHarness          # 编译后的 Swift 二进制
-├── Contents/Resources/dsh-root/            # 符号链接 → 项目根目录（debug）
-│                                              或 npm 生产闭包（release）
+├── Contents/MacOS/DeepSeekHarness          # Compiled Swift binary
+├── Contents/Resources/dsh-root/            # Symlink → project root (debug)
+│                                              or npm production closure (release)
 └── Contents/Info.plist
 ```
 
@@ -49,13 +51,13 @@ profiles 与会话**不再**写入每次启动的临时目录 `/tmp/dsh-<pid>`�
 ## 快速开始
 
 ```bash
-# 1. 构建 dsh（CLI + 前端）
+# 1. Build dsh (CLI + frontend)
 pnpm run build
 
-# 2. 构建 macOS 应用（轻量符号链接模式）
+# 2. Build macOS app (lightweight symlink mode)
 ./native-macos/Scripts/build.sh
 
-# 3. 运行
+# 3. Run
 open native-macos/dist/DeepSeekHarness-debug.app
 ```
 
@@ -68,10 +70,10 @@ Web UI 也可在浏览器中通过 `http://127.0.0.1:6080` 访问。
 `--from-source` 显式选择旧 pnpm 路径（体积大得多，仅供本地未发布代码调试）：
 
 ```bash
-./native-macos/Scripts/release.sh           # 完整构建（npm 闭包 + Swift）
-./native-macos/Scripts/release.sh --skip-dsh   # 复用现有 npm 闭包
-./native-macos/Scripts/release.sh --dmg      # 同时生成 .dmg 安装包
-./native-macos/Scripts/release.sh --sign "Developer ID"  # 代码签名
+./native-macos/Scripts/release.sh           # full build (npm closure + Swift)
+./native-macos/Scripts/release.sh --skip-dsh   # reuse existing npm closure
+./native-macos/Scripts/release.sh --dmg      # also create .dmg installer
+./native-macos/Scripts/release.sh --sign "Developer ID"  # codesign
 ```
 
 闭包由 `NPM_DSH_VERSION` 锁定（当前 `0.1.0-rc.6`），持久存放在
@@ -90,11 +92,11 @@ bundle 相对 dsh 目录树是自包含的（无需源码检出），但运行�
 当 deepseek-harness 有更新时：
 
 ```bash
-# 第一步：拉取最新代码并重新构建 Node.js 侧
+# Step 1: Pull latest code and rebuild the Node.js side
 git pull
 pnpm run build
 
-# 第二步：重新编译 Swift 二进制并刷新 .app 包
+# Step 2: Recompile Swift binary and refresh the app bundle
 ./native-macos/Scripts/build.sh --skip-dsh
 ```
 
@@ -139,20 +141,20 @@ release 构建将完整 dsh 运行时内嵌到 `.app`：
 从 JavaScript（Web UI 内部）调用：
 
 ```javascript
-// 异步请求并等待响应
+// Async request with response
 const path = await nativeBridge.request('directoryPicker')
 const files = await nativeBridge.request('filePicker', { multiple: true })
 const url = await nativeBridge.request('savePanel', { defaultName: 'report.md' })
 
-//  fire-and-forget
-nativeBridge.callSync('showNotification', { title: '完成', body: '任务已完成' })
+// Fire-and-forget
+nativeBridge.callSync('showNotification', { title: 'Done', body: 'Task complete' })
 
-// 环境变量
+// Environment
 const key = await nativeBridge.request('getEnvironment', { key: 'DEEPSEEK_API_KEY' })
 
-// 弹窗
-await nativeBridge.request('alert', { title: '提示', message: '发生了某事' })
-const yes = await nativeBridge.request('confirm', { title: '确认', message: '确定吗？' })
+// Alerts
+await nativeBridge.request('alert', { title: 'Info', message: 'Something happened' })
+const yes = await nativeBridge.request('confirm', { title: 'Confirm', message: 'Are you sure?' })
 ```
 
 ## 环境要求
@@ -161,3 +163,11 @@ const yes = await nativeBridge.request('confirm', { title: '确认', message: '�
 - Xcode 16+（提供 `xcrun swiftc`）
 - Node.js 22+（dsh 运行时）
 - pnpm（仅 `--from-source` 构建需要；npm 闭包路径只需 npm）
+
+## 开发笔记
+
+- Swift 源码位于 `native-macos/App/`
+- `DshServer.swift` — Node.js 子进程管理
+- `BridgeManager.swift` — WKWebView ↔ Swift 消息桥
+- `ContentView.swift` — 带 WKWebView 容器的 SwiftUI 视图
+- `DeepSeekHarnessApp.swift` — 应用入口

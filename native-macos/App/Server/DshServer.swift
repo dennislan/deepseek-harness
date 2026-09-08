@@ -184,10 +184,16 @@ actor DshServer {
                 }
 
                 if await checkReady(port: port) {
-                    let newURL = URL(string: "http://127.0.0.1:\(port)")
+                    var newURL = URL(string: "http://127.0.0.1:\(port)")!
+                    if let token = await Self.extractTokenWithRetry(from: logURL) {
+                        newURL = newURL.appending(queryItems: [URLQueryItem(name: "token", value: token)])
+                        logger.info("✅ dsh ready with token: \(newURL.absoluteString)")
+                    } else {
+                        logger.info("✅ dsh ready (no token found): \(newURL.absoluteString)")
+                    }
                     self.url = newURL
                     self.status = .running
-                    logger.info("✅ dsh ready http://127.0.0.1:\(port)")
+                    logger.info("📤 Posting notifications, url=\(self.url?.absoluteString ?? "nil")")
                     postStatusChanged()
                     postURLChanged()
                     return
@@ -346,6 +352,34 @@ actor DshServer {
             .joined(separator: "\n")
     }
 
+    /// Extracts the authentication token from the dsh boot log.
+    /// The log contains a line like: `dsh web: http://127.0.0.1:6080/?token=abc123`
+    private static func extractToken(from logURL: URL) -> String? {
+        guard let data = try? Data(contentsOf: logURL),
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        let pattern = #"dsh web: .*\?token=([^&\s]+)"#
+        let regex = try? NSRegularExpression(pattern: pattern)
+        let range = NSRange(location: 0, length: text.utf16.count)
+        if let match = regex?.firstMatch(in: text, options: [], range: range),
+           let range = Range(match.range(at: 1), in: text) {
+            return String(text[range])
+        }
+        return nil
+    }
+
+    /// Extracts token with retries to handle log file buffering delay.
+    private static func extractTokenWithRetry(from logURL: URL) async -> String? {
+        for _ in 1...10 {
+            if let token = extractToken(from: logURL) {
+                return token
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        }
+        return nil
+    }
+
     // MARK: - Notifications (called from actor context, safe)
 
     func postStatusChanged() {
@@ -366,7 +400,13 @@ actor DshServer {
         guard let checkURL = URL(string: "http://127.0.0.1:\(port)/") else { return false }
         do {
             let (_, response) = try await URLSession.shared.data(from: checkURL)
-            return (response as? HTTPURLResponse)?.statusCode == 200
+            // Accept any HTTP response (200, 303, 401, etc.) as long as the server responds.
+            // The dsh web server returns 401 for / without token, 303 with token.
+            // Any response means the server is up and running.
+            if let httpResponse = response as? HTTPURLResponse {
+                return httpResponse.statusCode > 0 && httpResponse.statusCode < 600
+            }
+            return false
         } catch { return false }
     }
 

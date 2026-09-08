@@ -1,46 +1,46 @@
-#!/usr/bin/bash
+#!/bin/bash
 # =============================================================================
 # DeepSeek Harness macOS — Unified Build & Release Script
 #
-# 单一入口脚本，合并原 oneclick.sh（一键拉取官方源码）与 release.sh（发布构建）的
-# 全部能力。官方源码会被原封不动地拉取/使用，打包逻辑（native-macos/）与源码树
+# 单一入口脚本，合并原 oneclick.sh(一键拉取官方源码)与 release.sh(发布构建)的
+# 全部能力。官方源码会被原封不动地拉取/使用，打包逻辑(native-macos/)与源码树
 # 完全隔离；除内嵌 Node 等打包层产物外，不修改任何 harness 源码。
 #
 # 主要模式：
-#   A. 一键拉取官方最新源码并构建（原 oneclick.sh 行为）
+#   A. 一键拉取官方最新源码并构建(原 oneclick.sh 行为)
 #        ./build-release.sh --oneclick
 #        ./build-release.sh --oneclick --ref <branch|tag> --url <repo> --clean
-#   B. 从本地 pnpm dev tree 组装（原 release.sh --from-source 默认行为）
+#   B. 从本地 pnpm dev tree 组装(原 release.sh --from-source 默认行为)
 #        ./build-release.sh --from-source
 #        ./build-release.sh --from-source --src <外部源码树>
-#   C. 从已发布 npm 生产闭包组装（原 release.sh 默认行为，零参数）
+#   C. 从已发布 npm 生产闭包组装(原 release.sh 默认行为，零参数)
 #        ./build-release.sh
 #
 # 通用选项：
-#   --oneclick           一键模式：拉取官方源码 → pnpm build → 组装（模式 A）
-#   --from-source        从本地/外部源码树组装（模式 B）
-#   --ref <branch|tag>   一键模式：指定上游 ref（默认 master）
+#   --oneclick           一键模式：拉取官方源码 → pnpm build → 组装(模式 A)
+#   --from-source        从本地/外部源码树组装(模式 B)
+#   --ref <branch|tag>   一键模式：指定上游 ref(默认 master)
 #   --url <repo>         一键模式：指定上游 git URL
 #   --clean              一键模式：全量重拉源码树；或 npm 模式：重装闭包
 #   --skip-dsh           跳过 dsh 安装/构建，复用已有产物
-#   --src <dir>          from-source 模式：使用外部源码树（默认本地 checkout）
-#   --no-node            跳过内嵌 Node 下载（运行时回退 DSH_NODE_PATH / 系统 node）
+#   --src <dir>          from-source 模式：使用外部源码树(默认本地 checkout)
+#   --no-node            跳过内嵌 Node 下载(运行时回退 DSH_NODE_PATH / 系统 node)
 #   --node-from <path>   从本地已安装的 Node 目录复制内嵌 Node，跳过下载
-#   --strip / --no-strip 二进制 strip（默认开启）
+#   --strip / --no-strip 二进制 strip(默认开启)
 #   --dmg                额外生成 .dmg
-#   --sign <id>          用指定身份 codesign（默认 ad-hoc）
+#   --sign <id>          用指定身份 codesign(默认 ad-hoc)
 #   --notarize           签名后公证
-#   --no-prune           保留 dev 依赖与构建产物（默认剪枝）
+#   --no-prune           保留 dev 依赖与构建产物(默认剪枝)
 #   -h | --help          显示帮助
 #
 # 内嵌 Node：默认下载 Node v24 arm64 到 Contents/Resources/node，使干净 macOS
 #   无需系统 Node 即可运行；DSH_NODE_PATH 与系统 node 仍作为 fallback。
-#   可用环境变量 NODE_VERSION 覆盖版本（须满足引擎约束 ^22.19 || >=24）。
+#   可用环境变量 NODE_VERSION 覆盖版本(须满足引擎约束 ^22.19 || >=24)。
 #   如本机已安装 Node，可用 --node-from <path> 或 NODE_LOCAL_PATH 直接复制，跳过下载。
 #
 # 输出：
 #   native-macos/dist/DeepSeekHarness.app
-#   native-macos/dist/DeepSeekHarness.dmg   （--dmg 时）
+#   native-macos/dist/DeepSeekHarness.dmg   (--dmg 时)
 # =============================================================================
 set -euo pipefail
 
@@ -61,31 +61,40 @@ NPM_CACHE_DIR="$TMP_DIR/npm-cache"
 SRC_DIR="$NATIVE_MACOS_DIR/App"
 PRUNE_SCRIPT="$SCRIPT_DIR/prune-node-modules.mjs"
 
-# npm 生产闭包（默认发布模式）：@deepseek-ai/dsh 的生产依赖，安装一次复用
+# npm 生产闭包(默认发布模式)：@deepseek-ai/dsh 的生产依赖，安装一次复用
 # =============================================================================
-# 模块 0.5：日志颜色常量（必须在模块 3 之前定义，供 early echo 使用）
+# 模块 0.5：日志颜色常量(必须在模块 3 之前定义，供 early echo 使用)
 # =============================================================================
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
-# 从 GitHub release 获取最新版本（以 GitHub 为准，npm 可能滞后）
-# GitHub tag 格式为 dsh-v0.1.0-rc.N，需去掉前缀 dsh- 得到 npm 版本
-NPM_DSH_VERSION="$(gh release list --repo deepseek-ai/deepseek-harness --limit 1 --json tagName --jq '.[0].tagName' | sed 's/^dsh-//' 2>/dev/null || npm view @deepseek-ai/dsh version --registry https://registry.npmjs.org 2>/dev/null || echo '0.1.0-rc.6')"
-# printf '%b\n' "  ${CYAN}使用 npm 最新版本: ${NPM_DSH_VERSION}${NC}"
+# 从 GitHub release 获取最新版本(以 GitHub 为准，npm 可能滞后)，
+# 但 GitHub tag 格式为 dsh-v0.1.0-rc.N：转 npm 版本号须依次去掉 dsh- 与 v 前缀
+# (npm 版本号不带 v，带 v 会触发 ETARGET)。gh 不可用时置空走下方回退。
+DSH_TAG_VERSION="$(gh release list --repo deepseek-ai/deepseek-harness --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null | sed -E 's/^dsh-//; s/^v//')" || DSH_TAG_VERSION=""
+
+# GitHub 可能领先于 npm(tag 已打但闭包尚未发布)：仅当 tag 版本真实存在于 registry 时
+# 才采用；否则回退到 npm 已发布的最新版本，再回退到固定兜底版本。
+if [ -n "$DSH_TAG_VERSION" ] \
+    && npm view "@deepseek-ai/dsh@$DSH_TAG_VERSION" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+    NPM_DSH_VERSION="$DSH_TAG_VERSION"
+else
+    NPM_DSH_VERSION="$(npm view @deepseek-ai/dsh version --registry https://registry.npmjs.org 2>/dev/null || echo '0.1.0-rc.6')"
+fi
 NPM_CLOSURE_DIR="$NATIVE_MACOS_DIR/dist/.dsh-npm-closure"
 
-# 一键模式：独立拉取的官方源码树（构建缓存，不入库）
+# 一键模式：独立拉取的官方源码树(构建缓存，不入库)
 SRC_LATEST="$NATIVE_MACOS_DIR/dist/src-latest"
 SRC_BUILD_CACHE="$SRC_LATEST/.oneclick-build-ok"
 
-# macOS SDK 路径（Swift 编译用）
+# macOS SDK 路径(Swift 编译用)
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null \
     || echo "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk")"
 
-# 内嵌 Node.js 运行时（固定版本，可被 NODE_VERSION 覆盖）
+# 内嵌 Node.js 运行时(固定版本，可被 NODE_VERSION 覆盖)
 NODE_VERSION="${NODE_VERSION:-v24.12.0}"
-# 本地已安装的 Node 目录（含 bin/node）；设置后优先复制，跳过下载。
-# 使用 $HOME 而非 ~，避免全角 ～（U+FF5E）被误写时无法展开。
+# 本地已安装的 Node 目录(含 bin/node)；设置后优先复制，跳过下载。
+# 使用 $HOME 而非 ~，避免全角 ～(U+FF5E)被误写时无法展开。
 if [ -z "${NODE_LOCAL_PATH:-}" ] || [ "$NODE_LOCAL_PATH" = "～/.nvm/versions/node/v24.12.0" ]; then
     NODE_LOCAL_PATH="$HOME/.nvm/versions/node/v24.12.0"
 fi
@@ -115,7 +124,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 帮助信息（从脚本头部注释提取）
+# 帮助信息(从脚本头部注释提取)
 show_help() {
     sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
@@ -124,7 +133,7 @@ show_help() {
 # =============================================================================
 # 模块 2：参数解析
 # =============================================================================
-# 主模式（互斥，最多一个）
+# 主模式(互斥，最多一个)
 MODE=""                 # oneclick | from-source | npm(默认)
 UPSTREAM_URL="https://github.com/deepseek-ai/deepseek-harness.git"
 UPSTREAM_REF="master"
@@ -138,7 +147,7 @@ CODE_SIGN_ID=""
 NOTARIZE=false
 PRUNE=true
 
-# 透传给组装阶段（oneclick 模式复用）
+# 透传给组装阶段(oneclick 模式复用)
 RELEASE_ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -177,7 +186,7 @@ done
 [ -z "$MODE" ] && MODE="npm"
 
 # =============================================================================
-# 模块 3：一键模式 — 拉取官方源码（原封不动）并构建
+# 模块 3：一键模式 — 拉取官方源码(原封不动)并构建
 # =============================================================================
 pull_upstream_source() {
     step "一键模式：拉取官方源码 ($UPSTREAM_URL @ $UPSTREAM_REF)"
@@ -189,7 +198,7 @@ pull_upstream_source() {
     if [ ! -d "$SRC_LATEST/.git" ]; then
         mkdir -p "$NATIVE_MACOS_DIR/dist"
         git clone --depth 1 --no-checkout "$UPSTREAM_URL" "$SRC_LATEST" \
-            || fail "git clone $UPSTREAM_URL 失败（网络/鉴权？）"
+            || fail "git clone $UPSTREAM_URL 失败(网络/鉴权？)"
         info "已浅克隆"
     else
         step "增量获取更新..."
@@ -199,7 +208,7 @@ pull_upstream_source() {
         info "已获取"
     fi
 
-    # 检出到请求的 ref（官方源码，原封不动）
+    # 检出到请求的 ref(官方源码，原封不动)
     git -C "$SRC_LATEST" checkout --detach "FETCH_HEAD" 2>/dev/null \
         || git -C "$SRC_LATEST" checkout --detach "origin/$UPSTREAM_REF" 2>/dev/null \
         || git -C "$SRC_LATEST" checkout "$UPSTREAM_REF" \
@@ -207,7 +216,7 @@ pull_upstream_source() {
 
     # 健全性检查：树结构看起来像 deepseek-harness
     [ -f "$SRC_LATEST/package.json" ] && [ -d "$SRC_LATEST/packages" ] \
-        || fail "检出的源码不像 deepseek-harness（缺少 package.json/packages）"
+        || fail "检出的源码不像 deepseek-harness(缺少 package.json/packages)"
     info "源码位于 $UPSTREAM_REF ($(git -C "$SRC_LATEST" rev-parse --short HEAD 2>/dev/null || echo unknown))"
 }
 
@@ -222,12 +231,12 @@ build_oneclick_source() {
 }
 
 # =============================================================================
-# 模块 4：内嵌 Node.js 运行时（自包含，可选）
+# 模块 4：内嵌 Node.js 运行时(自包含，可选)
 # =============================================================================
 embed_node_runtime() {
     local NODE_DEST="$APP_DIR/Contents/Resources/node"
     if [ "$EMBED_NODE" != true ]; then
-        info "已跳过内嵌 Node（--no-node）；运行时将回退 DSH_NODE_PATH / 系统 node"
+        info "已跳过内嵌 Node(--no-node)；运行时将回退 DSH_NODE_PATH / 系统 node"
         return
     fi
     if [ -x "$NODE_DEST/bin/node" ]; then
@@ -235,7 +244,7 @@ embed_node_runtime() {
         return
     fi
 
-    # 优先从本地已安装的 Node 目录复制，跳过下载（--node-from / NODE_LOCAL_PATH）
+    # 优先从本地已安装的 Node 目录复制，跳过下载(--node-from / NODE_LOCAL_PATH)
     if [ -n "${NODE_LOCAL_PATH:-}" ] && [ -x "$NODE_LOCAL_PATH/bin/node" ]; then
         step "从本地复制内嵌 Node @ $NODE_LOCAL_PATH"
         mkdir -p "$NODE_DEST/bin"
@@ -251,7 +260,7 @@ embed_node_runtime() {
     local NODE_DL="$TMP_DIR/$NODE_TARBALL"
     rm -f "$NODE_DL"
     curl -fSL "$NODE_URL" -o "$NODE_DL" \
-        || fail "下载 Node 失败：$NODE_URL（网络/鉴权？）"
+        || fail "下载 Node 失败：$NODE_URL(网络/鉴权？)"
 
     # 官方 SHA256 校验
     local EXPECTED
@@ -271,7 +280,7 @@ embed_node_runtime() {
     local NODE_EXTRACT="$TMP_DIR/node-${NODE_VERSION}-darwin-arm64"
     [ -d "$NODE_EXTRACT" ] || fail "Node 解压目录缺失：$NODE_EXTRACT"
 
-    # 仅保留 bin/node 与 LICENSE（最小体积）
+    # 仅保留 bin/node 与 LICENSE(最小体积)
     mkdir -p "$NODE_DEST/bin"
     cp "$NODE_EXTRACT/bin/node" "$NODE_DEST/bin/node" || fail "复制内嵌 node 失败"
     [ -f "$NODE_EXTRACT/LICENSE" ] && cp "$NODE_EXTRACT/LICENSE" "$NODE_DEST/LICENSE"
@@ -281,7 +290,7 @@ embed_node_runtime() {
 }
 
 # =============================================================================
-# 模块 5：Swift 二进制编译（release -O + 可选 strip）
+# 模块 5：Swift 二进制编译(release -O + 可选 strip)
 # =============================================================================
 compile_swift() {
     step "编译 Swift 二进制 (release -O)..."
@@ -309,11 +318,11 @@ compile_swift() {
     chmod +x "$BINARY_PATH"
 
     BINARY_PATH_FINAL="$BINARY_PATH"
-    info "Swift 二进制：$(du -sh "$BINARY_PATH" | awk '{print $1}')（strip=${STRIP:-true}）"
+    info "Swift 二进制：$(du -sh "$BINARY_PATH" | awk '{print $1}')(strip=${STRIP:-true})"
 }
 
 # =============================================================================
-# 模块 6：组装 dsh-root（两种来源：from-source / npm 闭包）
+# 模块 6：组装 dsh-root(两种来源：from-source / npm 闭包)
 # =============================================================================
 
 # 6a. from-source 模式：复制本地/外部 pnpm dev tree
@@ -323,9 +332,9 @@ assemble_from_source() {
     info "from-source 源树 = $SRC_TREE"
 
     # ── 剪枝排除规则 ───────────────────────────────────────────────
-    # PRUNE=true（默认）时移除 dev-only 包与构建产物；这些是安全删除项：
-    # 开发工具链（typescript/oxlint/vitest…）、默认禁用的 subagent SDK 二进制、
-    # 以及非运行时文件类型（*.map/*.d.ts/*.ts/*.tsbuildinfo）。
+    # PRUNE=true(默认)时移除 dev-only 包与构建产物；这些是安全删除项：
+    # 开发工具链(typescript/oxlint/vitest…),默认禁用的 subagent SDK 二进制,
+    # 以及非运行时文件类型(*.map/*.d.ts/*.ts/*.tsbuildinfo)。
     local PNPM_DEV_EXCLUDES=(
         --exclude='.pnpm/typescript@*'        --exclude='.pnpm/tsdown@*'
         --exclude='.pnpm/tsx@*'               --exclude='.pnpm/vite-tsconfig-paths@*'
@@ -360,7 +369,7 @@ assemble_from_source() {
     )
     if [ "$PRUNE" = false ]; then
         PNPM_DEV_EXCLUDES=(); PACKAGES_ARTIFACT_EXCLUDES=(); APPS_CLI_EXCLUDES=()
-        info "已禁用剪枝（--no-prune）；将包含 dev 依赖与产物"
+        info "已禁用剪枝(--no-prune)；将包含 dev 依赖与产物"
     fi
 
     # apps/cli：仅 lib/ + config + package.json 运行时必需
@@ -396,7 +405,7 @@ assemble_from_source() {
         rsync -a "${PNPM_DEV_EXCLUDES[@]}" "$SRC_TREE/node_modules/" "$DSH_ROOT/node_modules/" \
             || fail "复制 root node_modules 失败"
         info "  node_modules ($(du -sh "$DSH_ROOT/node_modules" | cut -f1))"
-    } || fail "root node_modules 缺失——请先 pnpm install"
+    } || fail "root node_modules 缺失--请先 pnpm install"
 
     # vendor/ 与 native/landlock-run
     [ -d "$SRC_TREE/vendor" ] && {
@@ -444,15 +453,15 @@ assemble_from_source() {
     info "dsh-root 总计：$DSH_ROOT_SIZE"
 }
 
-# 6b. npm 模式：从已发布生产闭包组装（扁平 node_modules）
+# 6b. npm 模式：从已发布生产闭包组装(扁平 node_modules)
 assemble_from_npm() {
     [ -d "$NPM_CLOSURE_DIR/node_modules" ] \
-        || fail "npm 闭包缺失 @ $NPM_CLOSURE_DIR —— 请不带 --skip-dsh 运行以安装"
+        || fail "npm 闭包缺失 @ $NPM_CLOSURE_DIR -- 请不带 --skip-dsh 运行以安装"
     rsync -a "$NPM_CLOSURE_DIR/node_modules/" "$DSH_ROOT/node_modules/" \
         || fail "复制 npm 闭包 node_modules 失败"
     info "  node_modules 剪枝前 ($(du -sh "$DSH_ROOT/node_modules" | cut -f1))"
 
-    # 删除非运行时文件（*.map/*.d.ts/test/docs/README 等）
+    # 删除非运行时文件(*.map/*.d.ts/test/docs/README 等)
     local before after
     before="$(du -sh "$DSH_ROOT/node_modules" | cut -f1)"
     find "$DSH_ROOT/node_modules" \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \
@@ -488,7 +497,7 @@ prune_exports_reachability() {
 }
 
 # =============================================================================
-# 模块 7：.app 包组装（二进制 + dsh-root + 资源 + Info.plist）
+# 模块 7：.app 包组装(二进制 + dsh-root + 资源 + Info.plist)
 # =============================================================================
 assemble_app_bundle() {
     step "组装 $APP_NAME.app..."
@@ -509,7 +518,7 @@ assemble_app_bundle() {
     fi
     prune_exports_reachability
 
-    # 资源目录（内嵌 Node 已由 embed_node_runtime 放入，无需额外复制）
+    # 资源目录(内嵌 Node 已由 embed_node_runtime 放入，无需额外复制)
     # 编译资源目录：AppIcon.icns + Assets.car
     local ASSETS_CATALOG="$SRC_DIR/Assets.xcassets"
     if [ -d "$ASSETS_CATALOG" ]; then
@@ -569,7 +578,7 @@ verify_and_smoke_test() {
     [ -f "$APP_DIR/Contents/Info.plist" ]         || fail "Info.plist 缺失"
     local CLI_BIN="$DSH_ROOT/apps/cli/lib/bin.js"
     [ ! -f "$CLI_BIN" ] && CLI_BIN="$DSH_ROOT/apps/cli/bin.js"
-    [ ! -f "$CLI_BIN" ] && fail "dsh CLI 缺失（检查 $DSH_ROOT/apps/cli/）"
+    [ ! -f "$CLI_BIN" ] && fail "dsh CLI 缺失(检查 $DSH_ROOT/apps/cli/)"
     info "dsh CLI 位于 $CLI_BIN"
     [ -f "$DSH_ROOT/apps/web/dist/index.html" ]   || fail "前端 dist 缺失"
 
@@ -603,25 +612,25 @@ verify_and_smoke_test() {
     trap cleanup EXIT
 
     if [ "$READY" = true ]; then
-        info "冒烟测试通过（:6080 HTTP 200）"
+        info "冒烟测试通过(:6080 HTTP 200)"
     else
-        warn "冒烟测试：30s 内服务未就绪（bundle 仍可能正常工作）"
+        warn "冒烟测试：30s 内服务未就绪(bundle 仍可能正常工作)"
     fi
 }
 
 # =============================================================================
-# 模块 9：代码签名（可选）与 DMG（可选）
+# 模块 9：代码签名(可选)与 DMG(可选)
 # =============================================================================
 codesign_app() {
     if [ -n "$CODE_SIGN_ID" ]; then
-        step "代码签名（身份：$CODE_SIGN_ID）..."
+        step "代码签名(身份：$CODE_SIGN_ID)..."
         codesign --sign "$CODE_SIGN_ID" --force --deep --options runtime "$APP_DIR" \
-            || warn "代码签名失败（可能需要 entitlements）"
+            || warn "代码签名失败(可能需要 entitlements)"
         info "已签名"
     elif [ "$NOTARIZE" = true ]; then
         warn "请求了公证但未提供 --sign；跳过"
     else
-        step "代码签名（ad-hoc）..."
+        step "代码签名(ad-hoc)..."
         codesign --force --deep -s - "$APP_DIR" || warn "ad-hoc 签名失败"
         info "已 ad-hoc 签名"
     fi
@@ -637,7 +646,7 @@ create_dmg() {
     rm -rf "$DMG_DIR" "$DMG_MOUNT" "$DMG_RW"; mkdir -p "$DMG_DIR"
 
     # 仅复制 app：Applications 软链接必须在镜像挂载后再创建，
-    # 否则 hdiutil -srcfolder 会跟随该链接、把整个 /Applications 拷入镜像导致转换失败。
+    # 否则 hdiutil -srcfolder 会跟随该链接,把整个 /Applications 拷入镜像导致转换失败。
     cp -R "$APP_DIR" "$DMG_DIR/"
 
     cat > "$DMG_DIR/.build_app" << 'PLIST'
@@ -682,12 +691,12 @@ create_dmg() {
 </plist>
 PLIST
 
-    # 1) 生成可读写镜像（不含 Applications 链接）
+    # 1) 生成可读写镜像(不含 Applications 链接)
     hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_DIR" \
         -fs HFS+ -format UDRW "$DMG_RW" \
         || fail "DMG 创建失败"
 
-    # 2) 挂载并在镜像内部创建 /Applications 软链接（不跟随到宿主系统）
+    # 2) 挂载并在镜像内部创建 /Applications 软链接(不跟随到宿主系统)
     local DEV
     DEV="$(hdiutil attach -nobrowse -noautoopen -mountpoint "$DMG_MOUNT" "$DMG_RW" \
         | awk '/Apple_HFS/ {print $1; exit}')"
@@ -699,7 +708,7 @@ PLIST
     hdiutil detach "$DEV" \
         || fail "DMG 卸载失败"
 
-    # 3) 转换为压缩镜像（UDZO）
+    # 3) 转换为压缩镜像(UDZO)
     rm -f "$DMG_PATH"   # convert 不覆盖已存在文件，需先清理上次残留
     hdiutil convert "$DMG_RW" -format UDZO -o "$DMG_PATH" \
         || fail "DMG 转换失败"
@@ -718,12 +727,12 @@ main() {
     printf '%b\n' "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
     mkdir -p "$TMP_DIR" "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-    # 阶段 1：准备 dsh 源码/产物（按模式分支）
+    # 阶段 1：准备 dsh 源码/产物(按模式分支)
     case "$MODE" in
         oneclick)
             if [ "$SKIP_DSH" = true ]; then
-                info "跳过拉取+构建（--skip-dsh），复用 $SRC_LATEST"
-                [ -d "$SRC_LATEST" ] || fail "无源码树 @ $SRC_LATEST —— 请先不带 --skip-dsh 运行"
+                info "跳过拉取+构建(--skip-dsh)，复用 $SRC_LATEST"
+                [ -d "$SRC_LATEST" ] || fail "无源码树 @ $SRC_LATEST -- 请先不带 --skip-dsh 运行"
             else
                 pull_upstream_source
                 build_oneclick_source
@@ -732,7 +741,7 @@ main() {
             ;;
         from-source)
             if [ "$SKIP_DSH" = true ]; then
-                info "跳过 pnpm build（--skip-dsh）"
+                info "跳过 pnpm build(--skip-dsh)"
             else
                 step "构建 dsh (pnpm run build) @ ${SRC:-$PROJECT_ROOT}"
                 cd "${SRC:-$PROJECT_ROOT}"
@@ -748,15 +757,15 @@ main() {
             fi
             if [ "$SKIP_DSH" = true ]; then
                 [ -d "$NPM_CLOSURE_DIR/node_modules" ] \
-                    || fail "npm 闭包缺失 @ $NPM_CLOSURE_DIR —— 请不带 --skip-dsh 运行"
-                info "复用 npm 闭包 @ $NPM_CLOSURE_DIR（--skip-dsh）"
+                    || fail "npm 闭包缺失 @ $NPM_CLOSURE_DIR -- 请不带 --skip-dsh 运行"
+                info "复用 npm 闭包 @ $NPM_CLOSURE_DIR(--skip-dsh)"
             else
                 [ "$CLEAN_FIRST" = true ] && rm -rf "$NPM_CLOSURE_DIR" "$NPM_CACHE_DIR"
                 step "安装 npm 生产闭包 (@deepseek-ai/dsh@$NPM_DSH_VERSION)..."
                 npm install "@deepseek-ai/dsh@$NPM_DSH_VERSION" --omit=dev --no-audit --no-fund \
                     --prefix "$NPM_CLOSURE_DIR" \
                     --cache "$NPM_CACHE_DIR" \
-                    || fail "npm install @deepseek-ai/dsh@$NPM_DSH_VERSION 失败（registry 不可达？）"
+                    || fail "npm install @deepseek-ai/dsh@$NPM_DSH_VERSION 失败(registry 不可达或版本不存在？)"
                 # 修复已发布 npm 包的已知问题：@deepseek-ai/dsh-settings@0.1.2-alpha.2
                 # 缺少 settingsNamespace / installSettingsSection 导出，用本地构建产物覆盖
                 local PATCHED_SETTINGS="$NPM_CLOSURE_DIR/node_modules/@deepseek-ai/dsh-settings/lib/index.js"
@@ -777,16 +786,16 @@ main() {
     # 阶段 3：Swift 编译
     compile_swift
 
-    # 阶段 4：组装 .app（含 dsh-root + 剪枝 + 资源）
+    # 阶段 4：组装 .app(含 dsh-root + 剪枝 + 资源)
     assemble_app_bundle
 
     # 阶段 5：验证 + 冒烟测试
     verify_and_smoke_test
 
-    # 阶段 6：签名（可选）
+    # 阶段 6：签名(可选)
     codesign_app
 
-    # 阶段 7：DMG（可选）
+    # 阶段 7：DMG(可选)
     create_dmg
 
     # 完成报告
