@@ -46,3 +46,4 @@ native-macos/dist/
 native-macos/.build/
 .omo/
 snapshots
+.gstack/

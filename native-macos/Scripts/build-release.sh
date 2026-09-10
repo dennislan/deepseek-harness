@@ -35,6 +35,7 @@
 #
 # 内嵌 Node：默认下载 Node v24 arm64 到 Contents/Resources/node，使干净 macOS
 #   无需系统 Node 即可运行；DSH_NODE_PATH 与系统 node 仍作为 fallback。
+#   同源 npm 一并内嵌，供应用内的运行时自动更新安装 @deepseek-ai/dsh 闭包使用。
 #   可用环境变量 NODE_VERSION 覆盖版本(须满足引擎约束 ^22.19 || >=24)。
 #   如本机已安装 Node，可用 --node-from <path> 或 NODE_LOCAL_PATH 直接复制，跳过下载。
 #
@@ -60,6 +61,7 @@ MODULE_CACHE="$TMP_DIR/module-cache"
 NPM_CACHE_DIR="$TMP_DIR/npm-cache"
 SRC_DIR="$NATIVE_MACOS_DIR/App"
 PRUNE_SCRIPT="$SCRIPT_DIR/prune-node-modules.mjs"
+ASSEMBLE_SCRIPT="$SCRIPT_DIR/assemble-runtime.mjs"
 
 # npm 生产闭包(默认发布模式)：@deepseek-ai/dsh 的生产依赖，安装一次复用
 # =============================================================================
@@ -233,13 +235,35 @@ build_oneclick_source() {
 # =============================================================================
 # 模块 4：内嵌 Node.js 运行时(自包含，可选)
 # =============================================================================
+
+# 一并内嵌 npm。应用运行期的运行时安装器需要 npm 解析并下载 @deepseek-ai/dsh
+# 生产闭包；只有 bin/node 的运行时无法自我更新。node 发行包自带 lib/node_modules/npm。
+install_embedded_npm() {
+    local NODE_SRC="$1" NODE_DEST="$2"
+    local NPM_SRC="$NODE_SRC/lib/node_modules/npm"
+    if [ ! -d "$NPM_SRC" ]; then
+        warn "未找到 $NPM_SRC；应用内自动更新将回退系统 npm"
+        return
+    fi
+    mkdir -p "$NODE_DEST/lib/node_modules" "$NODE_DEST/bin"
+    rm -rf "$NODE_DEST/lib/node_modules/npm"
+    cp -R "$NPM_SRC" "$NODE_DEST/lib/node_modules/npm" \
+        || fail "复制内嵌 npm 失败：$NPM_SRC"
+    ln -sfn "../lib/node_modules/npm/bin/npm-cli.js" "$NODE_DEST/bin/npm"
+    local NPM_VERSION
+    NPM_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' \
+        "$NODE_DEST/lib/node_modules/npm/package.json" | head -1)"
+    info "内嵌 npm ${NPM_VERSION:-?}"
+}
+
 embed_node_runtime() {
     local NODE_DEST="$APP_DIR/Contents/Resources/node"
     if [ "$EMBED_NODE" != true ]; then
         info "已跳过内嵌 Node(--no-node)；运行时将回退 DSH_NODE_PATH / 系统 node"
         return
     fi
-    if [ -x "$NODE_DEST/bin/node" ]; then
+    # node 与 npm 必须同时存在：只复用 node 会让自动更新回退到系统 npm。
+    if [ -x "$NODE_DEST/bin/node" ] && [ -f "$NODE_DEST/lib/node_modules/npm/bin/npm-cli.js" ]; then
         info "复用已存在的内嵌 Node @ $NODE_DEST ($(du -sh "$NODE_DEST" | awk '{print $1}'))"
         return
     fi
@@ -252,6 +276,7 @@ embed_node_runtime() {
             || fail "复制本地 node 失败：$NODE_LOCAL_PATH/bin/node"
         [ -f "$NODE_LOCAL_PATH/LICENSE" ] && cp "$NODE_LOCAL_PATH/LICENSE" "$NODE_DEST/LICENSE"
         chmod +x "$NODE_DEST/bin/node"
+        install_embedded_npm "$NODE_LOCAL_PATH" "$NODE_DEST"
         info "内嵌 Node 已复制 ($(du -sh "$NODE_DEST" | awk '{print $1}'))"
         return
     fi
@@ -280,11 +305,12 @@ embed_node_runtime() {
     local NODE_EXTRACT="$TMP_DIR/node-${NODE_VERSION}-darwin-arm64"
     [ -d "$NODE_EXTRACT" ] || fail "Node 解压目录缺失：$NODE_EXTRACT"
 
-    # 仅保留 bin/node 与 LICENSE(最小体积)
+    # 仅保留 bin/node、LICENSE 与 npm(最小可用集)
     mkdir -p "$NODE_DEST/bin"
     cp "$NODE_EXTRACT/bin/node" "$NODE_DEST/bin/node" || fail "复制内嵌 node 失败"
     [ -f "$NODE_EXTRACT/LICENSE" ] && cp "$NODE_EXTRACT/LICENSE" "$NODE_DEST/LICENSE"
     chmod +x "$NODE_DEST/bin/node"
+    install_embedded_npm "$NODE_EXTRACT" "$NODE_DEST"
     rm -f "$NODE_DL"
     info "内嵌 Node 已安装 ($(du -sh "$NODE_DEST" | awk '{print $1}'))"
 }
@@ -308,7 +334,14 @@ compile_swift() {
         -o "$BINARY_PATH" \
         "$SRC_DIR/App/DeepSeekHarnessApp.swift" \
         "$SRC_DIR/App/ContentView.swift" \
+        "$SRC_DIR/App/AboutPanel.swift" \
         "$SRC_DIR/Server/DshServer.swift" \
+        "$SRC_DIR/Server/NodeRuntime.swift" \
+        "$SRC_DIR/Update/RuntimeVersion.swift" \
+        "$SRC_DIR/Update/RuntimeLayout.swift" \
+        "$SRC_DIR/Update/ReleaseResolver.swift" \
+        "$SRC_DIR/Update/RuntimeInstaller.swift" \
+        "$SRC_DIR/Update/RuntimeUpdater.swift" \
         "$SRC_DIR/NativeBridge/BridgeManager.swift" \
         || fail "Swift 编译失败"
 
@@ -461,14 +494,12 @@ assemble_from_npm() {
         || fail "复制 npm 闭包 node_modules 失败"
     info "  node_modules 剪枝前 ($(du -sh "$DSH_ROOT/node_modules" | cut -f1))"
 
-    # 删除非运行时文件(*.map/*.d.ts/test/docs/README 等)
+    # 删除非运行时文件(*.map/*.d.ts/test/docs/README 等)。
+    # 与运行期安装器共用 assemble-runtime.mjs，避免两处规则漂移。
     local before after
     before="$(du -sh "$DSH_ROOT/node_modules" | cut -f1)"
-    find "$DSH_ROOT/node_modules" \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \
-        -o -name '*.tsbuildinfo' -o -name 'README*' -o -name 'CHANGELOG*' \) -type f -delete 2>/dev/null || true
-    find "$DSH_ROOT/node_modules" -type d \( -name test -o -name tests -o -name __tests__ \
-        -o -name docs -o -name fixtures \) -prune -exec rm -rf {} + 2>/dev/null || true
-    find "$DSH_ROOT/node_modules" -name '.DS_Store' -delete 2>/dev/null || true
+    node "$ASSEMBLE_SCRIPT" "$DSH_ROOT/node_modules" \
+        || warn "assemble-runtime.mjs 报告问题；继续使用未精简树"
     after="$(du -sh "$DSH_ROOT/node_modules" | cut -f1)"
     info "  node_modules 剪枝后 ($before → $after)"
 
@@ -518,7 +549,13 @@ assemble_app_bundle() {
     fi
     prune_exports_reachability
 
-    # 资源目录(内嵌 Node 已由 embed_node_runtime 放入，无需额外复制)
+    # 更新器脚本：应用运行期组装新运行时闭包时调用，必须随包分发。
+    local UPDATER_DIR="$APP_DIR/Contents/Resources/updater"
+    mkdir -p "$UPDATER_DIR"
+    cp "$ASSEMBLE_SCRIPT" "$PRUNE_SCRIPT" "$UPDATER_DIR/" \
+        || fail "复制更新器脚本失败"
+    info "  更新器脚本 ($(ls "$UPDATER_DIR" | tr '\n' ' '))"
+
     # 编译资源目录：AppIcon.icns + Assets.car
     local ASSETS_CATALOG="$SRC_DIR/Assets.xcassets"
     if [ -d "$ASSETS_CATALOG" ]; then
@@ -780,14 +817,16 @@ main() {
             ;;
     esac
 
-    # 阶段 2：内嵌 Node
-    embed_node_runtime
-
-    # 阶段 3：Swift 编译
+    # 阶段 2：Swift 编译
     compile_swift
 
-    # 阶段 4：组装 .app(含 dsh-root + 剪枝 + 资源)
+    # 阶段 3：组装 .app(含 dsh-root + 剪枝 + 更新器脚本 + 资源)
     assemble_app_bundle
+
+    # 阶段 4：内嵌 Node + npm
+    # 必须排在 assemble_app_bundle 之后：该步骤会 rm -rf 重建 .app，
+    # 先放入的内嵌运行时会被一并删除(旧构建产物中缺失内嵌 Node 的原因)。
+    embed_node_runtime
 
     # 阶段 5：验证 + 冒烟测试
     verify_and_smoke_test

@@ -13,7 +13,14 @@ let package = Package(
             sources: [
                 "App/DeepSeekHarnessApp.swift",
                 "App/ContentView.swift",
+                "App/AboutPanel.swift",
                 "Server/DshServer.swift",
+                "Server/NodeRuntime.swift",
+                "Update/RuntimeVersion.swift",
+                "Update/RuntimeLayout.swift",
+                "Update/ReleaseResolver.swift",
+                "Update/RuntimeInstaller.swift",
+                "Update/RuntimeUpdater.swift",
                 "NativeBridge/BridgeManager.swift",
             ],
             resources: [

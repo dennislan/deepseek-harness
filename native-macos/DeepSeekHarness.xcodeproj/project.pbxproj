@@ -7,17 +7,31 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		01D4ECD099B236CFB10BB49D /* ReleaseResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A417562BD7EB47B266E404F /* ReleaseResolver.swift */; };
 		0CCAA558355696D2C99E9DB3 /* DeepSeekHarnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472562E84736911591445FE6 /* DeepSeekHarnessApp.swift */; };
+		0F4005D0DE2B4FC87B03291E /* RuntimeLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6187CB53DDCF6C0DA4C1D733 /* RuntimeLayout.swift */; };
+		1855993D0FB6285B33ADFC88 /* NodeRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 449D42299557A21626EB5701 /* NodeRuntime.swift */; };
+		1BFC6613206D1CF5258CA581 /* RuntimeVersion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC6BF0E6F7EEEAD6685A5B68 /* RuntimeVersion.swift */; };
+		4BB7AA18808A092194E06FEB /* AboutPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0239B8794253EA55A6C9359D /* AboutPanel.swift */; };
 		4C080F89573199F6A4E88C24 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8CC34F801B476AE0F886958 /* ContentView.swift */; };
 		7718FCD09AEFBE77DEEC8639 /* DshServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52F07381B49498A4ED9F47FA /* DshServer.swift */; };
+		7D5FDFF56ADCFC2EB28ED6CE /* RuntimeUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D47343F9C78C1D2D455D6C /* RuntimeUpdater.swift */; };
+		8FFA10A0B00F03F2D25B8B51 /* RuntimeInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDC2A9F7F2188D8F9CFFFFC /* RuntimeInstaller.swift */; };
 		B0F7F21DCE85F1494A8208FC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DA7BF6F43FE27E7BD3F94632 /* Assets.xcassets */; };
 		C67A6FB231D4DCF866E5E337 /* BridgeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE9C7BEB570F5CF0D7B1441B /* BridgeManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0239B8794253EA55A6C9359D /* AboutPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutPanel.swift; sourceTree = "<group>"; };
+		20D47343F9C78C1D2D455D6C /* RuntimeUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeUpdater.swift; sourceTree = "<group>"; };
+		449D42299557A21626EB5701 /* NodeRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeRuntime.swift; sourceTree = "<group>"; };
 		472562E84736911591445FE6 /* DeepSeekHarnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSeekHarnessApp.swift; sourceTree = "<group>"; };
 		4DE07A5BE9CCF2D0829B1ABB /* DeepSeekHarness.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSeekHarness.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		52F07381B49498A4ED9F47FA /* DshServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DshServer.swift; sourceTree = "<group>"; };
+		6187CB53DDCF6C0DA4C1D733 /* RuntimeLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeLayout.swift; sourceTree = "<group>"; };
+		6A417562BD7EB47B266E404F /* ReleaseResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseResolver.swift; sourceTree = "<group>"; };
+		6CDC2A9F7F2188D8F9CFFFFC /* RuntimeInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeInstaller.swift; sourceTree = "<group>"; };
+		AC6BF0E6F7EEEAD6685A5B68 /* RuntimeVersion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeVersion.swift; sourceTree = "<group>"; };
 		D8CC34F801B476AE0F886958 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		DA7BF6F43FE27E7BD3F94632 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FE9C7BEB570F5CF0D7B1441B /* BridgeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeManager.swift; sourceTree = "<group>"; };
@@ -28,6 +42,7 @@
 			isa = PBXGroup;
 			children = (
 				52F07381B49498A4ED9F47FA /* DshServer.swift */,
+				449D42299557A21626EB5701 /* NodeRuntime.swift */,
 			);
 			path = Server;
 			sourceTree = "<group>";
@@ -47,6 +62,7 @@
 				E9478D2F1DAEA91A5913A07B /* App */,
 				D769649675F25B27BCC8C5DE /* NativeBridge */,
 				25D9CC7BBAD612BC748CDCDA /* Server */,
+				DBE3DC6E3F17339934900835 /* Update */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -67,9 +83,22 @@
 			path = NativeBridge;
 			sourceTree = "<group>";
 		};
+		DBE3DC6E3F17339934900835 /* Update */ = {
+			isa = PBXGroup;
+			children = (
+				6A417562BD7EB47B266E404F /* ReleaseResolver.swift */,
+				6CDC2A9F7F2188D8F9CFFFFC /* RuntimeInstaller.swift */,
+				6187CB53DDCF6C0DA4C1D733 /* RuntimeLayout.swift */,
+				20D47343F9C78C1D2D455D6C /* RuntimeUpdater.swift */,
+				AC6BF0E6F7EEEAD6685A5B68 /* RuntimeVersion.swift */,
+			);
+			path = Update;
+			sourceTree = "<group>";
+		};
 		E9478D2F1DAEA91A5913A07B /* App */ = {
 			isa = PBXGroup;
 			children = (
+				0239B8794253EA55A6C9359D /* AboutPanel.swift */,
 				D8CC34F801B476AE0F886958 /* ContentView.swift */,
 				472562E84736911591445FE6 /* DeepSeekHarnessApp.swift */,
 			);
@@ -105,6 +134,8 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+				};
 			};
 			buildConfigurationList = 217FC1FBFACD779F4907CB1D /* Build configuration list for PBXProject "DeepSeekHarness" */;
 			developmentRegion = en;
@@ -141,10 +172,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4BB7AA18808A092194E06FEB /* AboutPanel.swift in Sources */,
 				C67A6FB231D4DCF866E5E337 /* BridgeManager.swift in Sources */,
 				4C080F89573199F6A4E88C24 /* ContentView.swift in Sources */,
 				0CCAA558355696D2C99E9DB3 /* DeepSeekHarnessApp.swift in Sources */,
 				7718FCD09AEFBE77DEEC8639 /* DshServer.swift in Sources */,
+				1855993D0FB6285B33ADFC88 /* NodeRuntime.swift in Sources */,
+				01D4ECD099B236CFB10BB49D /* ReleaseResolver.swift in Sources */,
+				8FFA10A0B00F03F2D25B8B51 /* RuntimeInstaller.swift in Sources */,
+				0F4005D0DE2B4FC87B03291E /* RuntimeLayout.swift in Sources */,
+				7D5FDFF56ADCFC2EB28ED6CE /* RuntimeUpdater.swift in Sources */,
+				1BFC6613206D1CF5258CA581 /* RuntimeVersion.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -11,7 +11,10 @@ actor DshServer {
     // MARK: - Properties
 
     private var process: Process?
-    private let projectRoot: URL
+    /// The dsh tree in effect; re-resolved by ``restart()`` after an update.
+    private var projectRoot: URL
+    /// Locations of the updatable runtime, derived from `DSH_HOME`.
+    private let layout: RuntimeLayout
     private let defaultPort: Int = 6080
 
     var status: Status = .stopped
@@ -29,8 +32,11 @@ actor DshServer {
     // MARK: - Init
 
     init() {
-        self.projectRoot = Self.resolveProjectRoot()
-        logger.info("projectRoot = \(self.projectRoot.path)")
+        let layout = RuntimeLayout(home: RuntimeLayout.resolveHome())
+        let projectRoot = Self.resolveProjectRoot(layout: layout)
+        self.layout = layout
+        self.projectRoot = projectRoot
+        logger.info("projectRoot = \(projectRoot.path)")
     }
 
     // MARK: - Lifecycle
@@ -41,18 +47,13 @@ actor DshServer {
         postStatusChanged()
 
         // Runtime resolution order: embedded bundle node → DSH_NODE_PATH →
-        // system node (locateNode/findNodeInEnv). The embedded runtime makes the
-        // app self-contained on a clean macOS; DSH_NODE_PATH and system node
-        // remain as explicit/debugging fallbacks.
-        let nodePath: String? = bundledNode()
-            ?? ProcessInfo.processInfo.environment["DSH_NODE_PATH"]
-            ?? locateNode()
-            ?? findNodeInEnv()
-
-        guard let resolvedNode = nodePath, FileManager.default.fileExists(atPath: resolvedNode) else {
+        // well-known install locations → PATH. The embedded runtime makes the
+        // app self-contained on a clean macOS; the rest stay as explicit or
+        // debugging fallbacks.
+        guard let node = NodeRuntime.resolve() else {
             status = .failed(
                 "找不到可用的 Node.js 运行时。\n\n" +
-                "• 内嵌运行时缺失：Contents/Resources/node/bin/node 不存在（重新打包应先运行 release.sh 内嵌 Node）。\n" +
+                "• 内嵌运行时缺失：Contents/Resources/node/bin/node 不存在（重新打包应先运行 build-release.sh 内嵌 Node）。\n" +
                 "• 且未设置环境变量 DSH_NODE_PATH。\n" +
                 "• 且系统未安装 Node 22+。\n\n" +
                 "请安装 Node.js 22+（https://nodejs.org），或设置 DSH_NODE_PATH 指向 node 可执行文件。"
@@ -60,6 +61,7 @@ actor DshServer {
             postStatusChanged()
             return
         }
+        let resolvedNode = node.executable.path
 
         let binPath = projectRoot.appendingPathComponent("apps/cli/lib/bin.js")
         guard FileManager.default.fileExists(atPath: binPath.path) else {
@@ -88,24 +90,20 @@ actor DshServer {
         // EADDRINUSE and the app shows only "code=1". Terminate stale dsh
         // processes on the port before launching; a foreign owner fails loud
         // with an actionable message instead of a bare exit code.
-        let envHome = ProcessInfo.processInfo.environment["DSH_HOME"]?.trimmingCharacters(in: .whitespaces) ?? ""
+        let configuredHome = ProcessInfo.processInfo.environment["DSH_HOME"]?
+            .trimmingCharacters(in: .whitespaces) ?? ""
         let homePath: String
-        if envHome.isEmpty {
-            let defaultHome = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".dsh")
+        if configuredHome.isEmpty {
             do {
-                try FileManager.default.createDirectory(
-                    at: defaultHome,
-                    withIntermediateDirectories: true
-                )
+                try FileManager.default.createDirectory(at: layout.home, withIntermediateDirectories: true)
             } catch {
-                status = .failed("无法创建 DSH_HOME 目录 (\(defaultHome.path)): \(error.localizedDescription)")
+                status = .failed("无法创建 DSH_HOME 目录 (\(layout.home.path)): \(error.localizedDescription)")
                 postStatusChanged()
                 return
             }
-            homePath = defaultHome.path
+            homePath = layout.home.path
         } else {
-            homePath = envHome
+            homePath = configuredHome
         }
         let logURL = Self.prepareLog(homePath: homePath, port: port)
 
@@ -225,6 +223,25 @@ actor DshServer {
         postStatusChanged()
         postURLChanged()
     }
+
+    /// Stops dsh, re-resolves the runtime after an update, and starts it again.
+    ///
+    /// The app process stays alive; the web view reloads through the usual
+    /// `urlChanged` notification once the new child answers.
+    func restart() async {
+        stop()
+        projectRoot = Self.resolveProjectRoot(layout: layout)
+        logger.info("restarted with runtime root \(self.projectRoot.path)")
+        await start()
+    }
+
+    /// The dsh tree currently in effect.
+    /// - Returns: the directory dsh is launched from.
+    func runtimeRoot() -> URL { projectRoot }
+
+    /// Version of the runtime the app runs, read from the dsh manifest.
+    /// - Returns: nil when the manifest is missing or unreadable.
+    func runtimeVersion() -> RuntimeVersion? { layout.installedVersion(at: projectRoot) }
 
     // MARK: - Stale process recovery
 
@@ -416,30 +433,6 @@ actor DshServer {
         return defaultPort
     }
 
-    /// Returns the path to the app-bundled Node runtime
-    /// (Contents/Resources/node/bin/node), or nil when it is absent. This makes
-    /// the app self-contained on a clean macOS with no system Node.
-    private func bundledNode() -> String? {
-        guard let resourceURL = Bundle.main.resourceURL else { return nil }
-        let nodeURL = resourceURL.appendingPathComponent("node/bin/node")
-        return FileManager.default.fileExists(atPath: nodeURL.path) ? nodeURL.path : nil
-    }
-
-    private func locateNode() -> String? {        for candidate in ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"] {
-            if FileManager.default.fileExists(atPath: candidate) { return candidate }
-        }
-        return nil
-    }
-
-    private func findNodeInEnv() -> String? {
-        guard let path = ProcessInfo.processInfo.environment["PATH"] else { return nil }
-        for dir in path.split(separator: ":") {
-            let nodePath = URL(fileURLWithPath: "\(dir)/node")
-            if FileManager.default.fileExists(atPath: nodePath.path) { return nodePath.path }
-        }
-        return nil
-    }
-
     /// Builds the `PATH` for the dsh child so it can locate Node and pnpm.
     /// A GUI launch inherits only launchd's minimal PATH (no Node, no pnpm),
     /// which forces the plugin market to auto-provision a second pnpm whose
@@ -485,16 +478,22 @@ actor DshServer {
 
     // MARK: - Project Root Resolution
 
-    static func resolveProjectRoot() -> URL {
+    /// Resolves the dsh tree the app runs, in this order:
+    /// 1. `DSH_PROJECT_ROOT`, the development escape hatch;
+    /// 2. the newer of the updatable runtime and the runtime shipped in the
+    ///    bundle, so a stale downloaded runtime cannot shadow a fresh `.app`;
+    /// 3. walking up from the executable, for `swiftc` development builds.
+    /// - Parameter layout: the user runtime layout consulted for an update.
+    /// - Returns: the directory holding `apps/cli/lib/bin.js`.
+    static func resolveProjectRoot(layout: RuntimeLayout) -> URL {
         if let envRoot = ProcessInfo.processInfo.environment["DSH_PROJECT_ROOT"] {
             return URL(fileURLWithPath: envRoot)
         }
-        // Bundled app: Contents/Resources/dsh-root/
-        if let bundleURL = Bundle.main.resourceURL?
-            .appendingPathComponent("dsh-root", isDirectory: true),
-           FileManager.default.fileExists(atPath: bundleURL.appendingPathComponent("apps/cli/lib").path) {
-            logger.info("using bundled dsh-root: \(bundleURL.path)")
-            return bundleURL
+        let bundled = Bundle.main.resourceURL?
+            .appendingPathComponent(RuntimeLayout.runtimeDirectoryName, isDirectory: true)
+        if let root = preferredRuntime(installed: layout.dshRoot, bundled: bundled, layout: layout) {
+            logger.info("using runtime root: \(root.path)")
+            return root
         }
         // Dev build: walk up from the executable until the dsh CLI is found
         let exeURL = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
@@ -510,9 +509,36 @@ actor DshServer {
             dir = parent
         }
         fatalError(
-            "无法定位 dsh 项目根目录：从可执行文件所在目录向上逐级探测 apps/cli/lib/bin.js " +
-            "直至文件系统根目录均未命中。请设置 DSH_PROJECT_ROOT 环境变量，或确保二进制位于 deepseek-harness 仓库内。"
+            "无法定位 dsh 项目根目录：已检查用户运行时(\(layout.dshRoot.path))、应用包内 dsh-root，" +
+            "并从可执行文件所在目录向上逐级探测 apps/cli/lib/bin.js 直至文件系统根目录。" +
+            "请设置 DSH_PROJECT_ROOT 环境变量，或确保二进制位于 deepseek-harness 仓库内。"
         )
+    }
+
+    /// Picks the runtime to run: the higher installed version wins, and an
+    /// unreadable or incomplete tree loses to a usable one.
+    /// - Parameters:
+    ///   - installed: the user runtime root.
+    ///   - bundled: the runtime inside the app bundle, when the bundle has one.
+    ///   - layout: used to read each tree's dsh manifest.
+    /// - Returns: the preferred usable runtime, or nil when neither is usable.
+    private static func preferredRuntime(installed: URL, bundled: URL?, layout: RuntimeLayout) -> URL? {
+        let manager = FileManager.default
+        let cli = "apps/cli/lib/bin.js"
+        let installedUsable = manager.fileExists(atPath: installed.appendingPathComponent(cli).path)
+        let bundledUsable = bundled.map {
+            $0.path != installed.path && manager.fileExists(atPath: $0.appendingPathComponent(cli).path)
+        } ?? false
+
+        guard installedUsable, bundledUsable, let bundled else {
+            return installedUsable ? installed : (bundledUsable ? bundled : nil)
+        }
+        let installedVersion = layout.installedVersion(at: installed)
+        let bundledVersion = layout.installedVersion(at: bundled)
+        if let bundledVersion, let installedVersion, bundledVersion > installedVersion {
+            return bundled
+        }
+        return installed
     }
 }
 

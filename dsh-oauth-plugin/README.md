@@ -11,7 +11,7 @@ OAuth / login plugin for DeepSeek Harness. Supports username/password login and 
 - **Mode switching** — the WeChat / account icon in the top-right corner of the form switches between the two login methods.
 - **Sessions and workspaces isolated per user** — sessions and workspaces created after authentication are automatically associated with the current `userId` and persisted; two-layer filtering on the server and client means a logged-out user sees no sessions or workspaces at all.
 - **High-quality login UI** — full-screen split layout: an animated gradient brand panel on the left, a clean form card on the right.
-- **Sidebar user badge** — after login the username shows in the "Settings" slot of the left navigation (username left, gear icon right); clicking the username signs out directly. The badge hides automatically when the sidebar collapses into the narrow rail.
+- **Sidebar user badge** — after login the username shows in the bottom-left "Settings" row of the left navigation (username left, gear icon right), in the current harness theme's label color (light/dark adaptive). Clicking the username opens a small user menu popping up above it (currently "退出登录"; extend the `USER_MENU_ITEMS` list for more user actions). The badge hides automatically when the sidebar collapses into the narrow rail.
 
 ## Installation
 
@@ -189,7 +189,7 @@ The plugin relies on the following harness extension points that carry no public
 - **Exact-route overrides** — the host registers exact routes for `/api/workspace.list`, `/api/workspace.create`, `/api/session.list`, and `/api/session.history`, overriding the built-in handlers to implement isolation. The harness provides no official per-user filtering API; this is currently the only server-side isolation mechanism.
 - **`window.fetch` interception** — the client overrides the global `fetch` and mirrors the server-side filtering of `/api/session.list` and `/api/workspace.list` responses so the sidebar never renders unauthorized content.
 - **`document.body` injection** — the login overlay is appended directly to `document.body`, not registered through the official UI slot protocol.
-- **Sidebar "Settings" button structure** — the user badge depends on the DOM structure of the sidebar settings trigger button (`button[aria-haspopup="dialog"]` without an `aria-label`): the badge is injected as the first child, heals itself via a MutationObserver after the harness re-renders, and hides in the narrow-rail mode. If the harness changes that button's markup or layout, the badge injection may stop working.
+- **Sidebar "Settings" button structure** — the user badge depends on the sidebar settings trigger being the leftmost (then bottommost) `button[aria-haspopup="dialog"]` in the viewport: the badge is injected as its first child, heals itself via a MutationObserver after the harness re-renders, hides in the narrow-rail mode, and its text color follows the harness theme tokens. If the harness moves the settings trigger out of the bottom-left sidebar, the badge injection may stop working.
 
 If the harness later provides an official per-user filtering API or UI extension points, this plugin will migrate to them first and drop the unofficial mechanisms above.
 

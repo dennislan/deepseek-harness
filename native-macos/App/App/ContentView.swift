@@ -4,6 +4,7 @@ import WebKit
 struct ContentView: View {
     let server: DshServer
     let bridge: BridgeManager
+    @ObservedObject var updater: RuntimeUpdater
     @Environment(\.colorScheme) private var colorScheme
     @State private var displayURL: URL?
     @State private var isReady = false
@@ -14,6 +15,13 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             content
+        }
+        // 仅在安装运行时期间遮罩界面：此刻 dsh 即将被替换并重启，
+        // 让用户看到进度而不是疑似卡死。
+        .overlay {
+            if let message = updater.phase.progressMessage {
+                UpdateOverlay(message: message)
+            }
         }
         .onAppear {
             // Listen for status changes - only for status text and failure handling
@@ -224,6 +232,31 @@ struct WebViewContainer: NSViewRepresentable {
                      initiatedByFrame frame: WKFrameInfo,
                      completionHandler: @escaping (String?) -> Void) {
             bridge.handlePrompt(prompt: prompt, defaultText: defaultText ?? "", completion: completionHandler)
+        }
+    }
+}
+
+/// Blocks the window while a runtime update is being installed.
+private struct UpdateOverlay: View {
+    let message: String
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea()
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("正在更新")
+                    .font(.headline)
+                Text(message)
+                    .font(.callout)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                Text("更新期间请勿退出应用")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(28)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         }
     }
 }

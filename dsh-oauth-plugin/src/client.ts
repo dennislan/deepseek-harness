@@ -771,7 +771,13 @@ export function apply(_ctx: unknown): void {
   // ResizeObserver tracks the rail state. Clicking the name signs out; clicking
   // the gear opens settings (React keeps the button's own onClick).
 
-  const SETTINGS_TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"]:not([aria-label])'
+  // dsh 0.1.5+ gives the trigger a locale-owned aria-label, so attribute-only
+  // probing (`:not([aria-label])`) no longer matches it; the conversation area
+  // can host its own dialog triggers (context meter, usage panel, stats pills)
+  // alongside it. The settings trigger stays the leftmost, then bottommost,
+  // laid-out dialog button in every layout state, so select it geometrically —
+  // a version-independent rule.
+  const DIALOG_TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"][aria-expanded]'
   const USER_BADGE_ID = 'dsh-sidebar-user'
   const RAIL_WIDTH_THRESHOLD = 80
 
@@ -783,7 +789,20 @@ export function apply(_ctx: unknown): void {
   let syncingBadge = false
 
   function findSettingsTrigger(): HTMLButtonElement | null {
-    return document.querySelector<HTMLButtonElement>(SETTINGS_TRIGGER_SELECTOR)
+    let best: HTMLButtonElement | null = null
+    let bestLeft = Number.POSITIVE_INFINITY
+    let bestBottom = Number.NEGATIVE_INFINITY
+    for (const candidate of Array.from(document.querySelectorAll<HTMLButtonElement>(DIALOG_TRIGGER_SELECTOR))) {
+      const rect = candidate.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) continue
+      const leftDelta = rect.left - bestLeft
+      if (leftDelta < -1 || (Math.abs(leftDelta) <= 1 && rect.bottom > bestBottom)) {
+        best = candidate
+        bestLeft = rect.left
+        bestBottom = rect.bottom
+      }
+    }
+    return best
   }
 
   function applyRailState(trigger: HTMLButtonElement): void {
@@ -815,12 +834,19 @@ export function apply(_ctx: unknown): void {
         if (!userBadge) {
           userBadge = document.createElement('span')
           userBadge.id = USER_BADGE_ID
-          userBadge.title = 'Sign out'
+          userBadge.title = '用户菜单'
+          userBadge.setAttribute('role', 'menubutton')
+          userBadge.setAttribute('aria-haspopup', 'menu')
+          userBadge.setAttribute('aria-expanded', 'false')
+          userBadge.tabIndex = 0
           userBadge.addEventListener('click', (e: MouseEvent) => {
             e.preventDefault()
             e.stopPropagation()
-            if (!confirm('确定要退出登录吗？')) return
-            void logout()
+            if (userMenu) { closeUserMenu(); return }
+            openUserMenu(userBadge)
+          })
+          userBadge.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); userBadge?.click() }
           })
           trigger.insertBefore(userBadge, trigger.firstChild)
         }
@@ -843,6 +869,86 @@ export function apply(_ctx: unknown): void {
     store.setState({ user: null, error: null })
   }
 
+  // ── User menu: popup anchored above the bottom-left badge ───────────────
+  // The badge is pinned to the viewport's bottom edge, so the menu grows
+  // upward. Items are data rows: append a row to USER_MENU_ITEMS for new user
+  // actions (profile, API keys, …).
+  const USER_MENU_ID = 'dsh-user-menu'
+
+  interface UserMenuItem {
+    id: string
+    label: string
+    danger?: boolean
+    action: () => void | Promise<void>
+  }
+
+  const USER_MENU_ITEMS: UserMenuItem[] = [
+    { id: 'logout', label: '退出登录', danger: true, action: () => void logout() },
+  ]
+
+  let userMenu: HTMLElement | null = null
+  let userMenuTeardown: (() => void) | null = null
+
+  function closeUserMenu(): void {
+    userMenu?.remove()
+    userMenu = null
+    userMenuTeardown?.()
+    userMenuTeardown = null
+    userBadge?.setAttribute('aria-expanded', 'false')
+  }
+
+  function openUserMenu(anchor: HTMLElement): void {
+    closeUserMenu()
+    const menu = document.createElement('div')
+    menu.id = USER_MENU_ID
+    menu.setAttribute('role', 'menu')
+    for (const item of USER_MENU_ITEMS) {
+      const row = document.createElement('button')
+      row.type = 'button'
+      row.setAttribute('role', 'menuitem')
+      row.textContent = item.label
+      if (item.danger) row.classList.add('dsh-user-menu-item--danger')
+      row.addEventListener('click', () => {
+        closeUserMenu()
+        void item.action()
+      })
+      menu.appendChild(row)
+    }
+    document.body.appendChild(menu)
+    userMenu = menu
+    anchor.setAttribute('aria-expanded', 'true')
+
+    // Pin the menu just above the anchor, clamped to the viewport's left and
+    // right edges.
+    const GAP = 6
+    const rect = anchor.getBoundingClientRect()
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8))
+    menu.style.left = `${left}px`
+    menu.style.bottom = `${Math.max(8, window.innerHeight - rect.top + GAP)}px`
+
+    // Close on outside mousedown (the badge's own mousedown is excluded so the
+    // following click toggles it), on Escape, and on viewport resizes that
+    // invalidate the fixed coordinates.
+    const onDown = (ev: MouseEvent): void => {
+      const target = ev.target as Node | null
+      if (userMenu?.contains(target)) return
+      if (target instanceof Element && target.closest('#' + USER_BADGE_ID)) return
+      closeUserMenu()
+    }
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key === 'Escape') closeUserMenu()
+    }
+    const onResize = (): void => { closeUserMenu() }
+    document.addEventListener('mousedown', onDown, true)
+    document.addEventListener('keydown', onKey, true)
+    window.addEventListener('resize', onResize)
+    userMenuTeardown = () => {
+      document.removeEventListener('mousedown', onDown, true)
+      document.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('resize', onResize)
+    }
+  }
+
   function showLogoutButton(displayName: string): void {
     injectStyles()
     currentDisplayName = displayName
@@ -854,6 +960,7 @@ export function apply(_ctx: unknown): void {
   }
 
   function hideLogoutButton(): void {
+    closeUserMenu()
     sidebarObserver?.disconnect()
     sidebarObserver = null
     railObserver?.disconnect()
@@ -1541,15 +1648,61 @@ const css = `
   text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 500;
-  color: rgba(255,255,255,0.88);
+  /* Harness theme label color (light/dark); overlay palette as fallback. */
+  color: var(--dsw-alias-label-primary, rgba(255,255,255,0.88));
   cursor: pointer;
   user-select: none;
 }
 #dsh-sidebar-user:hover {
-  color: var(--dsh-accent);
+  color: var(--dsw-alias-brand-primary, var(--dsh-accent));
 }
 #dsh-sidebar-user.dsh-sidebar-user--hidden {
   display: none;
+}
+
+/* ── User menu (popup anchored above the bottom-left badge) ─────────────── */
+#dsh-user-menu {
+  position: fixed;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+  padding: 4px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-inverted, rgba(255,255,255,0.16));
+  border-radius: 12px;
+  background: var(--dsw-specific-menu, rgba(28,28,30,0.98));
+  box-shadow: var(--dsw-shadow-lv3, 0 8px 24px rgba(0,0,0,0.25));
+  color: var(--dsw-alias-label-primary, rgba(255,255,255,0.88));
+  font-size: 13px;
+  line-height: 20px;
+}
+#dsh-user-menu button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#dsh-user-menu button:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(255,255,255,0.1));
+}
+#dsh-user-menu button:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsh-accent));
+  outline-offset: -2px;
+}
+#dsh-user-menu button.dsh-user-menu-item--danger {
+  color: var(--dsw-alias-state-error-primary, #f87171);
+}
+#dsh-user-menu button.dsh-user-menu-item--danger:hover {
+  background: var(--dsw-alias-interactive-bg-hover-danger, rgba(248,113,113,0.12));
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
