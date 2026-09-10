@@ -114,7 +114,7 @@ final class RuntimeUpdater: ObservableObject {
                 logger.info("运行时已是最新 \(current.raw, privacy: .public)")
                 phase = .upToDate
                 if userInitiated {
-                    present(title: "当前已是最新版本", message: "dsh 运行时 \(current.raw)")
+                    present(title: "当前已是最新版本", message: "Version: \(current.raw)")
                 }
                 return
             }
@@ -161,7 +161,7 @@ final class RuntimeUpdater: ObservableObject {
             当前版本：\(current.raw)
             最新版本：\(latest.raw)
 
-            更新只替换应用内使用的 dsh 运行时，无需重新安装应用；更新完成后本地服务会自动重启。
+            更新完成后本地服务会自动重启。
             """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "立即更新")

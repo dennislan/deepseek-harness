@@ -26,7 +26,7 @@ enum AboutPanel {
     ///   installed most recently.
     static func present(_ info: Info) {
         let details = NSMutableAttributedString(
-            string: "(info.shellVersion)\n",
+            string: "Developed by Dennis <dennis.lan@gmail.com>",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: NSColor.secondaryLabelColor,
