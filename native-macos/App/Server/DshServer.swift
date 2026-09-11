@@ -11,11 +11,16 @@ actor DshServer {
     // MARK: - Properties
 
     private var process: Process?
-    /// The dsh tree in effect; re-resolved by ``restart()`` after an update.
+    /// The dsh tree in effect; re-resolved when a staged runtime is applied and
+    /// by ``restart()``.
     private var projectRoot: URL
     /// Locations of the updatable runtime, derived from `DSH_HOME`.
     private let layout: RuntimeLayout
     private let defaultPort: Int = 6080
+    /// The runtime this launch moved into place, kept until it has booted or has
+    /// been rolled back (see `RuntimeUpdater`). Readable so the updater can tell
+    /// a failed boot on a freshly applied runtime from any other failure.
+    private(set) var launchActivation: RuntimeInstaller.Activation?
 
     var status: Status = .stopped
     var url: URL?
@@ -40,6 +45,30 @@ actor DshServer {
     }
 
     // MARK: - Lifecycle
+
+    /// Applies a runtime an earlier session staged, before dsh is started.
+    ///
+    /// Whole-directory renames only, so this adds no startup delay and needs no
+    /// Node: the runtime the last session left in the pending directory becomes
+    /// the one this launch runs. The replaced runtime stays as
+    /// `dsh-root.previous` until ``clearLaunchActivation()`` records that the new
+    /// one booted, or `RuntimeUpdater` rolls it back.
+    /// - Returns: the runtime now in effect, or nil when nothing was staged.
+    @discardableResult
+    func applyStagedRuntime() -> RuntimeVersion? {
+        guard launchActivation == nil else { return launchActivation?.version }
+        guard let activation = RuntimeInstaller.activatePending(layout: layout) else { return nil }
+        launchActivation = activation
+        projectRoot = Self.resolveProjectRoot(layout: layout)
+        logger.info("已应用上次更新准备好的运行时 \(activation.version.raw, privacy: .public)，root \(self.projectRoot.path, privacy: .public)")
+        return activation.version
+    }
+
+    /// Drops the record of the runtime this launch activated, once dsh has
+    /// booted on it or it has been rolled back.
+    func clearLaunchActivation() {
+        launchActivation = nil
+    }
 
     func start() async {
         guard case .stopped = status else { return }
@@ -123,14 +152,11 @@ actor DshServer {
         var env = process.environment ?? [:]
         env["DSH_HOME"] = homePath
         // The dsh child (and the plugin market it hosts) needs a PATH that
-        // finds the user's pnpm. A GUI launch inherits only launchd's minimal
-        // PATH (/usr/bin:/bin:…) with no Node or pnpm, so the market's own
-        // pnpm auto-provisioner pulls a *second* pnpm whose content-addressable
+        // finds the user's pnpm: without one the market's own pnpm
+        // auto-provisioner pulls a *second* pnpm whose content-addressable
         // store diverges from the one that built the profile — every later
-        // `pnpm add`/`update` then fails with ERR_PNPM_UNEXPECTED_STORE. Expand
-        // PATH with the resolved Node bin, the user's nvm Node bins, and the
-        // common macOS Node/pnpm locations, preserving any inherited PATH.
-        env["PATH"] = Self.augmentedChildPath(inheriting: env["PATH"], resolvedNodeBin: (resolvedNode as NSString).deletingLastPathComponent)
+        // `pnpm add`/`update` then fails with ERR_PNPM_UNEXPECTED_STORE.
+        env = node.childEnvironment(inheriting: env)
         // Same story for PNPM_HOME: pnpm's global store defaults to it, so a
         // GUI launch that drops it can land on a different store than the one
         // the profile was built against.
@@ -431,49 +457,6 @@ actor DshServer {
         if let envPort = ProcessInfo.processInfo.environment["DSH_PORT"],
            let port = Int(envPort), port > 0 && port <= 65535 { return port }
         return defaultPort
-    }
-
-    /// Builds the `PATH` for the dsh child so it can locate Node and pnpm.
-    /// A GUI launch inherits only launchd's minimal PATH (no Node, no pnpm),
-    /// which forces the plugin market to auto-provision a second pnpm whose
-    /// store diverges from the profile's — the `ERR_PNPM_UNEXPECTED_STORE`
-    /// install failure. The resolved Node bin and the user's nvm Node bins
-    /// lead, followed by the common macOS locations; any PATH already present
-    /// (e.g. a terminal-launched app) is preserved and de-duplicated.
-    /// - Parameters:
-    ///   - inherited: the parent process PATH, or nil.
-    ///   - resolvedNodeBin: the bin directory of the Node chosen to run dsh.
-    /// - Returns: a de-duplicated, order-preserving PATH string.
-    private static func augmentedChildPath(inheriting inherited: String?, resolvedNodeBin: String) -> String {
-        var candidates: [String] = []
-        candidates.append(resolvedNodeBin)
-        if let home = NSHomeDirectory().isEmpty ? nil : NSHomeDirectory() as String? {
-            let nvmRoot = (home as NSString).appendingPathComponent(".nvm/versions/node")
-            if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmRoot) {
-                for version in versions where !version.hasPrefix(".") {
-                    candidates.append((nvmRoot as NSString).appendingPathComponent("\(version)/bin"))
-                }
-            }
-        }
-        candidates.append(contentsOf: [
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-        ])
-        if let inherited {
-            candidates.append(contentsOf: inherited.split(separator: ":").map(String.init))
-        }
-        var seen = Set<String>()
-        var result: [String] = []
-        for candidate in candidates {
-            guard !candidate.isEmpty, !seen.contains(candidate) else { continue }
-            seen.insert(candidate)
-            result.append(candidate)
-        }
-        return result.joined(separator: ":")
     }
 
     // MARK: - Project Root Resolution

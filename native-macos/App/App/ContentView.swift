@@ -16,13 +16,18 @@ struct ContentView: View {
         VStack(spacing: 0) {
             content
         }
-        // 仅在安装运行时期间遮罩界面：此刻 dsh 即将被替换并重启，
-        // 让用户看到进度而不是疑似卡死。
-        .overlay {
-            if let message = updater.phase.progressMessage {
-                UpdateOverlay(message: message)
+        // 提示条只承载用户主动发起的检查结果：更新在后台准备、下次启动生效，
+        // 界面不做任何遮罩，用户始终可以继续操作。停在右上角——底边在实测中
+        // 几乎没人注意到，而菜单栏在顶端，视线本来就在上半屏。
+        .overlay(alignment: .topTrailing) {
+            if let report = updater.report {
+                UpdateBanner(message: report)
+                    .padding(.top, 16)
+                    .padding(.trailing, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: updater.report)
         .onAppear {
             // Listen for status changes - only for status text and failure handling
             statusObserver = NotificationCenter.default.addObserver(
@@ -236,27 +241,29 @@ struct WebViewContainer: NSViewRepresentable {
     }
 }
 
-/// Blocks the window while a runtime update is being installed.
-private struct UpdateOverlay: View {
+/// Status of a check the user asked for, as a banner that cannot block work.
+///
+/// It takes no clicks and no key focus, and it never covers the window: the
+/// running session keeps receiving every event while it is on screen. The card
+/// sits in the window's top-right corner and wraps rather than growing into a
+/// full-width strip, so a long failure message with a log path stays readable.
+private struct UpdateBanner: View {
     let message: String
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea()
-            VStack(spacing: 12) {
-                ProgressView()
-                Text("正在更新")
-                    .font(.headline)
-                Text(message)
-                    .font(.callout)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                Text("更新期间请勿退出应用")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(28)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.secondary)
+            Text(message)
+                .font(.callout)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: 380, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(radius: 8)
+        .allowsHitTesting(false)
     }
 }

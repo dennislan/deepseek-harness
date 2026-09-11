@@ -73,7 +73,8 @@ CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 # 从 GitHub release 获取最新版本(以 GitHub 为准，npm 可能滞后)，
 # 但 GitHub tag 格式为 dsh-v0.1.0-rc.N：转 npm 版本号须依次去掉 dsh- 与 v 前缀
 # (npm 版本号不带 v，带 v 会触发 ETARGET)。gh 不可用时置空走下方回退。
-DSH_TAG_VERSION="$(gh release list --repo deepseek-ai/deepseek-harness --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null | sed -E 's/^dsh-//; s/^v//')" || DSH_TAG_VERSION=""
+#DSH_TAG_VERSION="$(gh release list --repo deepseek-ai/deepseek-harness --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null | sed -E 's/^dsh-//; s/^v//')" || DSH_TAG_VERSION=""
+DSH_TAG_VERSION="0.1.5-rc.1"
 
 # GitHub 可能领先于 npm(tag 已打但闭包尚未发布)：仅当 tag 版本真实存在于 registry 时
 # 才采用；否则回退到 npm 已发布的最新版本，再回退到固定兜底版本。

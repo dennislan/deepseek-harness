@@ -51,7 +51,66 @@ struct NodeRuntime: Sendable {
         return nil
     }
 
+    /// Environment for a child process that has to find this Node on `PATH`.
+    ///
+    /// npm runs a dependency's install script through `sh -c`, which resolves
+    /// `node` from `PATH` rather than from the interpreter that started npm, and
+    /// the plugin market looks for `pnpm` there too. A GUI launch inherits only
+    /// launchd's minimal `PATH` (`/usr/bin:/bin:…`), so a native dependency's
+    /// install script dies with `sh: node: command not found` (exit 127) and a
+    /// runtime update never completes.
+    /// - Parameter inherited: the parent environment, or nil for this process's.
+    /// - Returns: the environment with `PATH` led by this Node's bin directory,
+    ///   the user's nvm Node bins, and the common macOS locations.
+    func childEnvironment(inheriting inherited: [String: String]? = nil) -> [String: String] {
+        var environment = inherited ?? ProcessInfo.processInfo.environment
+        environment["PATH"] = Self.childPath(
+            leadingWith: executable.deletingLastPathComponent().path,
+            inheriting: environment["PATH"]
+        )
+        return environment
+    }
+
     // MARK: - Resolution helpers
+
+    /// Builds the `PATH` handed to a child process.
+    ///
+    /// The resolved Node bin and the user's nvm Node bins lead, followed by the
+    /// common macOS locations; any inherited `PATH` (e.g. a terminal-launched
+    /// app) is preserved. De-duplicated and order-preserving.
+    /// - Parameters:
+    ///   - nodeBin: the bin directory of the Node the app runs.
+    ///   - inherited: the parent process `PATH`, or nil.
+    /// - Returns: the `PATH` string for the child.
+    private static func childPath(leadingWith nodeBin: String, inheriting inherited: String?) -> String {
+        var candidates = [nodeBin]
+        let nvmRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".nvm/versions/node", isDirectory: true)
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmRoot.path) {
+            candidates.append(contentsOf: versions
+                .filter { !$0.hasPrefix(".") }
+                .map { nvmRoot.appendingPathComponent("\($0)/bin").path })
+        }
+        candidates.append(contentsOf: [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ])
+        if let inherited {
+            candidates.append(contentsOf: inherited.split(separator: ":").map(String.init))
+        }
+        var seen = Set<String>()
+        var result: [String] = []
+        for candidate in candidates {
+            guard !candidate.isEmpty, !seen.contains(candidate) else { continue }
+            seen.insert(candidate)
+            result.append(candidate)
+        }
+        return result.joined(separator: ":")
+    }
 
     private static func npmCLI(prefixedBy prefix: URL) -> URL? {
         let candidate = prefix.appendingPathComponent("lib/node_modules/npm/bin/npm-cli.js")

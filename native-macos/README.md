@@ -23,8 +23,8 @@ DeepSeekHarness.app/
 2. Waits for HTTP `/` to return 200
 3. `ContentView` loads `http://127.0.0.1:6080` in a `WKWebView`
 4. JS bridge (`nativeBridge`) maps `window.nativeBridge.request()` → macOS APIs
-5. `RuntimeUpdater` checks for a newer dsh runtime in the background and, once the
-   user accepts, installs it under `<DSH_HOME>/runtime` and restarts dsh
+5. `RuntimeUpdater` checks for a newer dsh runtime in the background and stages it
+   under `<DSH_HOME>/runtime`; the next launch applies it before dsh starts
 
 Before starting dsh, the app terminates any stale dsh still listening on the
 chosen port. A force-quit or crash can orphan the dsh child of an earlier run;
@@ -57,7 +57,8 @@ default (same precedence as `dsh-home-paths`):
   the log tail in the app's status instead of a bare exit code, and runtime
   updates write their npm output to `update-*.log` here
 - `runtime/` — the updatable dsh runtime (`dsh-root`), the one it replaced
-  (`dsh-root.previous`), the shared npm cache (`.npm-cache`), and the update lock
+  (`dsh-root.previous`), the runtime published for the next launch
+  (`dsh-root.pending`), the shared npm cache (`.npm-cache`), and the update lock
 
 Profiles and sessions are **no longer** written to a per-launch
 `/tmp/dsh-<pid>` directory: they survive app restarts.
@@ -109,20 +110,25 @@ on port 6080.
 
 ## Runtime Updates
 
-The app updates its own dsh runtime; users never rebuild or reinstall it.
+The app updates its own dsh runtime; users never rebuild or reinstall it. An
+update runs in the background and takes effect at the next launch: it opens no
+window, takes no click, and never restarts dsh under a session in use.
 
 On launch, after dsh has settled, the app asks GitHub for the newest release tag,
 verifies that version exists on the npm registry (falling back to the registry's
 `latest`), and compares it with the runtime it is running. Nothing is downloaded
-and no prompt appears unless the published version is newer; a network or
-registry failure is logged and the launch continues.
+unless the published version is newer; a network or registry failure is logged
+and the launch continues.
 
-The same check is available on demand from the app menu: **检查更新…** always
-reports an outcome — `发现新版本` with the current and target version, `正在更新`
-while the runtime is replaced, or `当前已是最新版本`. A manual check that cannot
-reach GitHub or the registry reports the failure instead of logging it silently.
+The same check is available on demand from the app menu. **检查更新…** always answers
+in a card in the top-right corner of the window: the step it is on while it installs
+(`下载并安装运行时`), that step when a check is clicked while another run is still in
+flight, or its outcome — `当前已是最新版本`, `<version> 已下载完成，下次启动应用时生效`,
+or a failure with the reason and the log directory. A version that is already staged
+is reported instead of installed again. The banner takes no clicks and steals no
+focus, so even an explicit check cannot block work.
 
-When the user accepts, the app:
+A newer version is installed without asking, and the app:
 
 1. installs `@deepseek-ai/dsh@<version>` with the embedded npm into
    `<DSH_HOME>/runtime/.staging-<uuid>`, reusing `<DSH_HOME>/runtime/.npm-cache`
@@ -132,15 +138,16 @@ When the user accepts, the app:
 3. creates the `apps/cli` and `apps/web/dist` bridge symlinks;
 4. verifies the staged runtime — `node apps/cli/lib/bin.js --version` must load
    the module graph and print the requested version;
-5. switches with a directory rename, keeping the previous runtime as
-   `dsh-root.previous`, and restarts dsh.
+5. publishes it as `<DSH_HOME>/runtime/dsh-root.pending` with a directory rename.
 
-If the new runtime fails to boot, the app moves `dsh-root.previous` back,
-restarts dsh, and reports the failure together with the log directory. The app
-process never exits and the `.app` bundle is never modified, so its code
-signature and Gatekeeper status stay intact. Runtime state lives under
-`<DSH_HOME>/runtime` (default `~/.dsh/runtime`), and update logs land in
-`<DSH_HOME>/logs/update-*.log`.
+The next launch moves `dsh-root.pending` to `dsh-root` before dsh starts, keeping
+the runtime it replaces as `dsh-root.previous`. Applying it any earlier would kill
+whatever session is being served, which is why the switch waits for a launch. If
+the new runtime fails to boot, the app moves `dsh-root.previous` back and restarts
+dsh instead, and logs the failure with the log directory. The app process never
+exits and the `.app` bundle is never modified, so its code signature and Gatekeeper
+status stay intact. Runtime state lives under `<DSH_HOME>/runtime` (default
+`~/.dsh/runtime`), and update logs land in `<DSH_HOME>/logs/update-*.log`.
 
 The About panel reports the runtime version in effect rather than the shell's
 build-time version, so it stays correct after an update.
@@ -221,15 +228,16 @@ const yes = await nativeBridge.request('confirm', { title: 'Confirm', message: '
 ## Development Notes
 
 - The Swift source lives in `native-macos/App/`
-- `App/DeepSeekHarnessApp.swift` — App entry point; starts dsh and the update check
-- `App/ContentView.swift` — SwiftUI view with WKWebView container and update overlay
+- `App/DeepSeekHarnessApp.swift` — App entry point; applies a staged runtime, starts dsh, and runs the update check
+- `App/ContentView.swift` — SwiftUI view with WKWebView container and the non-blocking update banner
 - `App/AboutPanel.swift` — About panel reporting the runtime version in effect
-- `Server/DshServer.swift` — Node.js subprocess management and runtime root resolution
+- `Server/DshServer.swift` — Node.js subprocess management, runtime root resolution, staged-runtime activation
 - `Server/NodeRuntime.swift` — Node and npm location
 - `Update/RuntimeVersion.swift` — release-tag and semver parsing
 - `Update/RuntimeLayout.swift` — runtime paths, lock, and installed-version read
 - `Update/ReleaseResolver.swift` — GitHub release tag → npm registry resolution
-- `Update/RuntimeInstaller.swift` — closure install, prune, verify, swap, rollback
-- `Update/RuntimeUpdater.swift` — launch check, prompt, progress, restart
+- `Update/RuntimeInstaller.swift` — closure install, prune, verify, publish, activation, rollback
+- `Update/RuntimeUpdater.swift` — launch check, background staging, rollback, banner text
+- `Tests/RuntimeUpdaterManualPathTests.swift` — end-to-end assertions for the menu's check, run by `Scripts/test-updater-manual-path.sh`
 - `NativeBridge/BridgeManager.swift` — WKWebView ↔ Swift message bridge
-- `bash native-macos/Scripts/test-updater-logic.sh` — offline assertions for version logic
+- `bash native-macos/Scripts/test-updater-logic.sh` — offline assertions for version and activation logic

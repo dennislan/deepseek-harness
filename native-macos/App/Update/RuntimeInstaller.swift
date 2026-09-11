@@ -3,16 +3,15 @@ import os
 
 /// Stage of an in-flight runtime installation, surfaced to the UI.
 enum InstallStep: String, Sendable, Equatable {
-    case preparing, installing, pruning, swapping, restarting
+    case preparing, installing, pruning, publishing
 
     /// Localized label shown while this stage runs.
     var label: String {
         switch self {
-        case .preparing:  return "准备更新"
-        case .installing: return "下载并安装运行时"
-        case .pruning:    return "精简运行时文件"
-        case .swapping:   return "切换到新运行时"
-        case .restarting: return "重启本地服务"
+        case .preparing:   return "准备更新"
+        case .installing:  return "下载并安装运行时"
+        case .pruning:     return "精简运行时文件"
+        case .publishing:  return "写入新运行时"
         }
     }
 }
@@ -21,8 +20,9 @@ enum InstallStep: String, Sendable, Equatable {
 ///
 /// Mirrors the npm path of `native-macos/Scripts/build-release.sh`: install the
 /// production closure, prune it, create the two bridge symlinks dsh resolves
-/// through, verify it, then replace the live runtime in a single directory
-/// rename while keeping the previous one for rollback.
+/// through, verify it, and publish it as the runtime the next launch runs.
+/// Assembling happens in a staging directory and switching is a directory
+/// rename, so a failed attempt never damages the runtime in service.
 struct RuntimeInstaller: Sendable {
     /// Why an installation could not complete.
     enum Failure: Error, CustomStringConvertible {
@@ -52,8 +52,18 @@ struct RuntimeInstaller: Sendable {
         }
     }
 
+    /// A runtime published by an update and applied at a later launch.
+    struct Activation: Equatable, Sendable {
+        /// The version now in effect.
+        let version: RuntimeVersion
+        /// Whether the replaced runtime is kept as `dsh-root.previous`.
+        let hasPrevious: Bool
+    }
+
     /// Package installed for every runtime update.
     static let packageName = "@deepseek-ai/dsh"
+    /// Entry point that must exist in a runtime root before it can be activated.
+    static let cliPath = "apps/cli/lib/bin.js"
     /// Web frontend package whose `dist` the `apps/web/dist` bridge points at.
     static let frontendPackage = "@deepseek-ai/dsh-web-frontend"
     /// Registry the build script also pins, so installs stay deterministic.
@@ -97,34 +107,61 @@ struct RuntimeInstaller: Sendable {
         }
     }
 
-    // MARK: - Install
+    // MARK: - Stage
 
-    /// Installs `version` and switches the runtime over to it.
+    /// Builds `version` and publishes it as the runtime the next launch runs.
     ///
-    /// The live runtime is untouched until the staged closure passes
-    /// ``verify(_:expecting:)``; after that the switch is a directory rename.
+    /// The runtime in service is untouched throughout: the closure is assembled
+    /// in a staging directory and only a verified tree is moved into place.
     /// - Parameters:
     ///   - version: the version to install.
     ///   - progress: called with each stage from a background context.
-    /// - Returns: the runtime root now in effect.
+    /// - Returns: the runtime root now waiting to be activated.
     /// - Throws: ``Failure`` describing the failed stage.
-    func install(
+    func stage(
         version: RuntimeVersion,
         progress: @escaping @Sendable (InstallStep) -> Void
     ) async throws -> URL {
         try layout.prepare()
         progress(.preparing)
 
+        // The log opens before the first fallible step, so an attempt that dies
+        // in the lock, the free-space check, or npm resolution leaves a file
+        // saying why instead of only an os_log line.
+        let log = layout.updateLogURL()
+        append(to: log, "== 更新 @deepseek-ai/dsh 到 \(version.raw) ==")
+        logger.info("更新运行时到 \(version.raw, privacy: .public)，日志 \(log.path, privacy: .public)")
+
+        do {
+            try await assemble(version: version, log: log, progress: progress)
+        } catch {
+            append(to: log, "== 更新未完成：\(error) ==")
+            logger.error("更新 \(version.raw, privacy: .public) 未完成：\(String(describing: error), privacy: .public)")
+            throw error
+        }
+        append(to: log, "== 更新完成：\(version.raw) 已就绪，下次启动生效 ==")
+        logger.info("运行时 \(version.raw, privacy: .public) 已就绪，下次启动生效")
+        return layout.pendingRoot
+    }
+
+    /// Takes the update lock and runs the staged install through to the tree the
+    /// next launch activates: npm closure, prune, bridge symlinks, precheck, publish.
+    /// - Parameters:
+    ///   - version: the version to install.
+    ///   - log: the update log that receives every command and its output.
+    ///   - progress: called with each stage from a background context.
+    /// - Throws: ``Failure`` describing the failed stage.
+    private func assemble(
+        version: RuntimeVersion,
+        log: URL,
+        progress: @escaping @Sendable (InstallStep) -> Void
+    ) async throws {
         let lock = try layout.acquireLock()
         defer { lock.release() }
         layout.cleanStaleStaging()
 
         try requireSpace()
         let npm = try requireNpm()
-        let log = layout.updateLogURL()
-        append(to: log, "== 更新 @deepseek-ai/dsh 到 \(version.raw) ==")
-        logger.info("更新运行时到 \(version.raw, privacy: .public)，日志 \(log.path, privacy: .public)")
-
         let staging = try layout.makeStagingRoot()
         defer { try? FileManager.default.removeItem(at: staging) }
 
@@ -137,7 +174,11 @@ struct RuntimeInstaller: Sendable {
             "--cache", layout.npmCache.path,
         ]
         append(to: log, "$ node \(installArguments.joined(separator: " "))")
-        let npmStatus = await Self.run(node.executable, installArguments, loggingTo: log)
+        let npmStatus = await Self.run(
+            node.executable, installArguments,
+            loggingTo: log,
+            environment: node.childEnvironment()
+        )
         guard npmStatus == 0 else { throw Failure.npmFailed(status: npmStatus, log: log) }
 
         let stagedRoot = staging.appendingPathComponent(RuntimeLayout.runtimeDirectoryName, isDirectory: true)
@@ -152,16 +193,73 @@ struct RuntimeInstaller: Sendable {
             throw Failure.missingArtifact("新运行时预检失败：\(problem)（日志：\(log.path)）")
         }
 
-        progress(.swapping)
-        try swap(stagedRoot)
-        logger.info("运行时已切换到 \(version.raw, privacy: .public)")
-        return layout.dshRoot
+        progress(.publishing)
+        try publish(stagedRoot)
     }
 
-    /// Restores the runtime replaced by the most recent successful update.
+    /// Applies the runtime a previous session published.
+    ///
+    /// Renames only: no Node and no npm run here, so activation costs no startup
+    /// delay. A pending tree that is unreadable, incomplete, or not newer than
+    /// the runtime in service is discarded instead of applied.
+    /// - Parameter layout: runtime locations.
+    /// - Returns: the activated runtime, or nil when there was nothing to apply.
+    static func activatePending(layout: RuntimeLayout) -> Activation? {
+        let manager = FileManager.default
+        let pending = layout.pendingRoot
+        guard manager.fileExists(atPath: pending.path) else { return nil }
+
+        let current = layout.installedVersion(at: layout.dshRoot)
+        guard let version = layout.installedVersion(at: pending),
+              manager.fileExists(atPath: pending.appendingPathComponent(cliPath).path) else {
+            logger.error("待生效运行时不可用，已丢弃 \(pending.path, privacy: .public)")
+            try? manager.removeItem(at: pending)
+            return nil
+        }
+        guard current.map({ version > $0 }) ?? true else {
+            logger.error(
+                "待生效运行时 \(version.raw, privacy: .public) 不高于当前 \(current?.raw ?? "无", privacy: .public)，已丢弃"
+            )
+            try? manager.removeItem(at: pending)
+            return nil
+        }
+
+        try? manager.removeItem(at: layout.previousRoot)
+        var keptPrevious = false
+        if manager.fileExists(atPath: layout.dshRoot.path) {
+            do {
+                try manager.moveItem(at: layout.dshRoot, to: layout.previousRoot)
+                keptPrevious = true
+            } catch {
+                logger.error("备份当前运行时失败: \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
+        }
+        do {
+            try manager.moveItem(at: pending, to: layout.dshRoot)
+        } catch {
+            logger.error("应用待生效运行时失败: \(error.localizedDescription, privacy: .public)")
+            if keptPrevious { try? manager.moveItem(at: layout.previousRoot, to: layout.dshRoot) }
+            return nil
+        }
+        logger.info("运行时 \(version.raw, privacy: .public) 已生效")
+        return Activation(version: version, hasPrevious: keptPrevious)
+    }
+
+    /// Restores the runtime replaced by the most recent activation.
     /// - Returns: the runtime root now in effect.
     /// - Throws: ``Failure`` when no previous runtime was kept.
     func rollback() throws -> URL {
+        try Self.rollback(layout: layout)
+    }
+
+    /// Restores the runtime replaced by the most recent activation.
+    ///
+    /// Layout only: neither Node nor npm is needed to move a directory back.
+    /// - Parameter layout: runtime locations.
+    /// - Returns: the runtime root now in effect.
+    /// - Throws: ``Failure`` when no previous runtime was kept.
+    static func rollback(layout: RuntimeLayout) throws -> URL {
         let manager = FileManager.default
         guard manager.fileExists(atPath: layout.previousRoot.path) else {
             throw Failure.missingArtifact("没有可回滚的上一版本：\(layout.previousRoot.path)")
@@ -172,7 +270,7 @@ struct RuntimeInstaller: Sendable {
         } catch {
             throw Failure.fileSystem("回滚失败：\(error.localizedDescription)")
         }
-        logger.info("运行时已回滚到 \(self.layout.dshRoot.path, privacy: .public)")
+        logger.info("运行时已回滚到 \(layout.dshRoot.path, privacy: .public)")
         return layout.dshRoot
     }
 
@@ -190,7 +288,7 @@ struct RuntimeInstaller: Sendable {
     func verify(_ root: URL, expecting version: RuntimeVersion) async -> String? {
         let manager = FileManager.default
         let required = [
-            "apps/cli/lib/bin.js",
+            Self.cliPath,
             "apps/web/dist/index.html",
             RuntimeLayout.dshPackagePath,
         ]
@@ -202,13 +300,14 @@ struct RuntimeInstaller: Sendable {
             return "版本不匹配：期望 \(version.raw)，实际 \(installed?.raw ?? "未知")"
         }
 
-        let cli = root.appendingPathComponent("apps/cli/lib/bin.js")
+        let cli = root.appendingPathComponent(Self.cliPath)
         let log = layout.logsDirectory.appendingPathComponent("verify-\(version.raw).log")
         append(to: log, "$ node \(cli.path) --version")
         let status = await Self.run(
             node.executable,
             [cli.path, "--version"],
             loggingTo: log,
+            environment: node.childEnvironment(),
             timeout: Self.verificationTimeout
         )
         let output = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
@@ -252,7 +351,11 @@ struct RuntimeInstaller: Sendable {
                 throw Failure.missingArtifact("缺少更新器脚本 \(script) @ \(toolsDirectory.path)")
             }
             append(to: log, "$ node \(tool.path) \(modules)")
-            let status = await Self.run(node.executable, [tool.path, modules], loggingTo: log)
+            let status = await Self.run(
+                node.executable, [tool.path, modules],
+                loggingTo: log,
+                environment: node.childEnvironment()
+            )
             guard status == 0 else { throw Failure.toolFailed(tool: script, status: status, log: log) }
         }
     }
@@ -288,24 +391,14 @@ struct RuntimeInstaller: Sendable {
         )
     }
 
-    /// Replaces the live runtime, keeping the previous one for rollback.
-    private func swap(_ root: URL) throws {
+    /// Moves the verified tree to the runtime root the next launch activates.
+    private func publish(_ root: URL) throws {
         let manager = FileManager.default
-        try? manager.removeItem(at: layout.previousRoot)
-        if manager.fileExists(atPath: layout.dshRoot.path) {
-            do {
-                try manager.moveItem(at: layout.dshRoot, to: layout.previousRoot)
-            } catch {
-                throw Failure.fileSystem("备份当前运行时失败：\(error.localizedDescription)")
-            }
-        }
+        try? manager.removeItem(at: layout.pendingRoot)
         do {
-            try manager.moveItem(at: root, to: layout.dshRoot)
+            try manager.moveItem(at: root, to: layout.pendingRoot)
         } catch {
-            if manager.fileExists(atPath: layout.previousRoot.path) {
-                try? manager.moveItem(at: layout.previousRoot, to: layout.dshRoot)
-            }
-            throw Failure.fileSystem("切换运行时失败：\(error.localizedDescription)")
+            throw Failure.fileSystem("写入待生效运行时失败：\(error.localizedDescription)")
         }
     }
 
@@ -331,16 +424,23 @@ struct RuntimeInstaller: Sendable {
     // MARK: - Child processes
 
     /// Runs a child process with its output appended to `logURL`.
+    ///
+    /// The caller supplies the environment because a child that only inherits
+    /// the app's must still find Node on `PATH`: npm runs a dependency's install
+    /// script through `sh -c`, which resolves `node` from `PATH` and fails with
+    /// exit 127 when a GUI launch left it at launchd's minimal value.
     /// - Parameters:
     ///   - executable: the program to run.
     ///   - arguments: its arguments.
     ///   - logURL: receives combined stdout and stderr.
+    ///   - environment: the child environment, typically ``NodeRuntime/childEnvironment(inheriting:)``.
     ///   - timeout: seconds before the process is terminated; nil waits forever.
-    /// - Returns: the exit status, or 0 when the process could not be started.
+    /// - Returns: the exit status, or -1 when the process could not be started.
     static func run(
         _ executable: URL,
         _ arguments: [String],
         loggingTo logURL: URL,
+        environment: [String: String],
         timeout: TimeInterval? = nil
     ) async -> Int32 {
         guard let handle = openForAppend(logURL) else { return -1 }
@@ -349,6 +449,7 @@ struct RuntimeInstaller: Sendable {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
+        process.environment = environment
         process.standardOutput = handle
         process.standardError = handle
 

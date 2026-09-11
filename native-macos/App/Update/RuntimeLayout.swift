@@ -26,6 +26,13 @@ struct RuntimeLayout: Sendable {
         runtimeRoot.appendingPathComponent("\(Self.runtimeDirectoryName).previous", isDirectory: true)
     }
 
+    /// A runtime an update finished assembling and verifying, waiting for the
+    /// next launch to take effect. Swapping it in while dsh runs would kill the
+    /// session it is serving, so nothing touches it until the app starts again.
+    var pendingRoot: URL {
+        runtimeRoot.appendingPathComponent("\(Self.runtimeDirectoryName).pending", isDirectory: true)
+    }
+
     /// npm content-addressed cache shared by every update, so unchanged
     /// dependency tarballs are never downloaded twice.
     var npmCache: URL {

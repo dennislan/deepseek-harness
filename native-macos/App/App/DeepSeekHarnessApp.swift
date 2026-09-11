@@ -14,7 +14,13 @@ struct DeepSeekHarnessApp: App {
             ContentView(server: server, bridge: bridge, updater: updater)
                 .onAppear {
                     AppDelegate.terminateDsh = { DshServer.activeTerminator?() }
-                    Task { await server.start() }
+                    // A runtime the last session staged is moved into place
+                    // before dsh starts, so an update takes effect here instead
+                    // of restarting the server under a session in use.
+                    Task {
+                        await server.applyStagedRuntime()
+                        await server.start()
+                    }
                     // Runs alongside startup rather than after it: a slow or
                     // unreachable network must not delay dsh booting.
                     Task { await updater.checkOnLaunch(server: server) }

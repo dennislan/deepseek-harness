@@ -1,40 +1,64 @@
-import AppKit
 import Foundation
 import os
 
-/// Drives runtime updates: resolve the newest published version, ask the user,
-/// install it into the user runtime root, and restart dsh on it.
+/// Drives runtime updates: resolve the newest published version, stage it in the
+/// background, and let the next launch run it.
 ///
-/// The launch check runs after dsh has settled, so a slow or unreachable network
-/// never delays the app. All published state is main-actor isolated because it
-/// feeds the UI and the About panel.
+/// Nothing here interrupts the user. The launch check opens no window at all, and
+/// an update never restarts dsh under a session in use: it is assembled and
+/// verified in the staging directory, published as `dsh-root.pending`, and moved
+/// into place by ``DshServer/applyStagedRuntime()`` at the next launch — the same
+/// way a browser applies an update it downloaded in the background. A check the
+/// user asked for reports through ``report``, which the window renders as a
+/// banner that takes no clicks, so even an explicit check cannot block work.
+/// All published state is main-actor isolated because it feeds the UI and the
+/// About panel.
 @MainActor
 final class RuntimeUpdater: ObservableObject {
     /// What the updater is doing, as surfaced to the UI.
     enum Phase: Equatable {
         case idle
         case checking
-        case upToDate
-        case available(current: String, latest: String)
-        case installing(InstallStep)
+        case upToDate(current: String)
+        /// A run of ``InstallStep``s assembling a newer runtime in the background.
+        case staging(InstallStep)
+        /// A newer runtime is on disk and takes effect at the next launch.
+        case staged(current: String, latest: String)
         case failed(String)
 
-        /// Overlay text for the current phase, or nil when no overlay is due.
-        var progressMessage: String? {
-            guard case .installing(let step) = self else { return nil }
-            return step.label
-        }
-
-        /// True while a check or an installation is in flight.
+        /// True while a check or a staging run is in flight.
         var isBusy: Bool {
             switch self {
-            case .checking, .installing: return true
-            case .idle, .upToDate, .available, .failed: return false
+            case .checking, .staging: return true
+            case .idle, .upToDate, .staged, .failed: return false
+            }
+        }
+    }
+
+    /// Why an update could not start. Both are environment problems rather than
+    /// installer failures.
+    private enum Precondition: Error, CustomStringConvertible {
+        case nodeMissing
+        case toolsMissing
+
+        var description: String {
+            switch self {
+            case .nodeMissing:
+                return "找不到 Node.js 运行时，无法安装更新"
+            case .toolsMissing:
+                return "应用包内缺少更新器脚本 (Contents/Resources/updater)，无法安装更新"
             }
         }
     }
 
     @Published private(set) var phase: Phase = .idle
+    /// Seconds a final banner message stays on screen before it dismisses itself.
+    private static let reportLifetime: UInt64 = 8_000_000_000
+    /// Banner text for a check the user asked for; nil when nothing is shown.
+    ///
+    /// The launch check never reports here: an update the user did not ask for
+    /// stays in the log.
+    @Published private(set) var report: String?
     /// Version of the runtime in effect; nil when its manifest is unreadable.
     @Published private(set) var runtimeVersion: String?
     /// Directory the runtime in effect was loaded from.
@@ -42,7 +66,7 @@ final class RuntimeUpdater: ObservableObject {
 
     private let layout: RuntimeLayout
     private let resolver: ReleaseResolver
-    private var available: RuntimeVersion?
+    private var reportDismissal: Task<Void, Never>?
 
     /// Creates an updater.
     /// - Parameters:
@@ -65,45 +89,55 @@ final class RuntimeUpdater: ObservableObject {
 
     /// Checks for a newer runtime when the user asks for it.
     ///
-    /// Unlike the launch check this always reports an outcome, so an explicit
-    /// action never ends in silence.
-    /// - Parameter server: the server an update would restart.
+    /// Unlike the launch check this reports progress and outcome in the banner,
+    /// so an explicit action never ends in silence.
+    /// - Parameter server: the server whose runtime decides whether an update is due.
     func checkForUpdates(server: DshServer) async {
-        await performCheck(server: server, userInitiated: true)
+        await performCheck(server: server, reportsToUser: true)
     }
 
-    /// Checks for a newer runtime once dsh has settled, then offers to install it.
-    /// - Parameter server: the server an update would restart.
+    /// Checks for a newer runtime once dsh has settled, then stages it silently.
+    /// - Parameter server: the server whose boot outcome decides a rollback.
     func checkOnLaunch(server: DshServer) async {
         await waitForBoot(server: server)
-        guard phase == .idle else { return }
-        await performCheck(server: server, userInitiated: false)
-    }
-
-    /// Resolves the newest version and reacts to the comparison.
-    /// - Parameters:
-    ///   - server: the server an update would restart.
-    ///   - userInitiated: whether the choice came from the menu, which decides
-    ///     whether an up-to-date or failed check is reported.
-    private func performCheck(server: DshServer, userInitiated: Bool) async {
-        guard !phase.isBusy else {
-            logger.info("已有更新流程在运行，忽略本次检查")
+        // A runtime applied at launch is the only thing that changed since the
+        // last run, so a failed boot is attributed to it and the runtime it
+        // replaced goes back. No update check follows a rollback: the staged
+        // release is the one that just failed, so checking would re-stage it.
+        if await restoreLaunchActivation(server: server) { return }
+        guard phase == .idle else {
+            logger.notice("启动检查跳过：已有更新流程在运行（\(self.progressLabel, privacy: .public)）")
             return
         }
-        await refreshRuntimeIdentity(server: server)
+        await performCheck(server: server, reportsToUser: false)
+    }
+
+    // MARK: - Steps
+
+    /// Resolves the newest version and stages it when it is newer.
+    /// - Parameters:
+    ///   - server: the server whose runtime is compared with the published one.
+    ///   - reportsToUser: whether the check came from the menu, which decides
+    ///     whether the banner shows progress and the outcome.
+    private func performCheck(server: DshServer, reportsToUser: Bool) async {
+        guard !phase.isBusy else {
+            // A click that lands while a run is already in flight must not end in
+            // silence: it reports the step that run is on instead of being dropped.
+            logger.notice("已有更新流程在运行（\(self.progressLabel, privacy: .public)），本次检查汇报当前进度")
+            if reportsToUser { announce("更新正在进行：\(progressLabel)") }
+            return
+        }
+        logger.notice("检查更新开始（\(reportsToUser ? "用户请求" : "启动检查", privacy: .public)）")
         phase = .checking
+        if reportsToUser { setReport("正在检查更新…") }
+        await refreshRuntimeIdentity(server: server)
 
         guard let current = await server.runtimeVersion() else {
             logger.error("当前运行时版本不可读: \(self.runtimePath, privacy: .public)")
-            guard userInitiated else {
-                phase = .idle
-                return
-            }
-            phase = .failed("无法读取当前 dsh 运行时版本")
-            present(
-                title: "检查更新失败",
-                message: "无法读取当前 dsh 运行时版本。\n\n运行时目录：\(runtimePath)",
-                style: .warning
+            settle(
+                .failed("无法读取当前 dsh 运行时版本"),
+                announcement: "检查更新失败：无法读取当前 dsh 运行时版本（\(runtimePath)）",
+                reportsToUser: reportsToUser
             )
             return
         }
@@ -112,37 +146,89 @@ final class RuntimeUpdater: ObservableObject {
             let resolution = try await resolver.latest()
             guard resolution.version > current else {
                 logger.info("运行时已是最新 \(current.raw, privacy: .public)")
-                phase = .upToDate
-                if userInitiated {
-                    present(title: "当前已是最新版本", message: "Version: \(current.raw)")
-                }
+                settle(
+                    .upToDate(current: current.raw),
+                    announcement: "当前已是最新版本（\(current.raw)）",
+                    reportsToUser: reportsToUser
+                )
                 return
             }
-            available = resolution.version
-            phase = .available(current: current.raw, latest: resolution.version.raw)
             logger.info("发现新运行时 \(resolution.version.raw, privacy: .public)，当前 \(current.raw, privacy: .public)")
-            guard confirmUpdate(current: current, latest: resolution.version) else {
-                logger.info("用户选择稍后更新")
-                phase = .idle
+            if layout.installedVersion(at: layout.pendingRoot) == resolution.version {
+                // A previous run already staged this version; the check reports
+                // that outcome instead of reinstalling what is already on disk.
+                logger.notice("\(resolution.version.raw, privacy: .public) 已在待生效目录，跳过重复安装")
+                settle(
+                    .staged(current: current.raw, latest: resolution.version.raw),
+                    announcement: "\(resolution.version.raw) 已下载完成，下次启动应用时生效",
+                    reportsToUser: reportsToUser
+                )
                 return
             }
-            await install(server: server)
+            try await stage(version: resolution.version, current: current, reportsToUser: reportsToUser)
         } catch {
-            logger.info("更新检查失败: \(String(describing: error), privacy: .public)")
-            guard userInitiated else {
-                phase = .idle
-                return
-            }
-            let detail = (error as? ReleaseResolver.Failure)?.description ?? error.localizedDescription
-            phase = .failed(detail)
-            present(title: "检查更新失败", message: detail, style: .warning)
+            let detail = describe(error)
+            logger.error("运行时更新失败: \(detail, privacy: .public)")
+            settle(
+                .failed(detail),
+                announcement: "更新未完成：\(detail)（日志：\(layout.logsDirectory.path)）",
+                reportsToUser: reportsToUser
+            )
         }
     }
 
-    // MARK: - Steps
+    /// Builds `version` in the background and publishes it for the next launch.
+    private func stage(version: RuntimeVersion, current: RuntimeVersion, reportsToUser: Bool) async throws {
+        guard let node = NodeRuntime.resolve() else { throw Precondition.nodeMissing }
+        guard let tools = RuntimeInstaller.resolveToolsDirectory() else { throw Precondition.toolsMissing }
 
-    /// Waits for dsh to reach a terminal state so the prompt never covers a
-    /// startup that is still running.
+        let installer = RuntimeInstaller(layout: layout, node: node, toolsDirectory: tools)
+        phase = .staging(.preparing)
+        if reportsToUser { setReport(InstallStep.preparing.label) }
+        _ = try await installer.stage(version: version) { step in
+            Task { @MainActor [weak self] in
+                // A step reported after the run settled must not put the updater
+                // back into a busy phase, which would drop every later check.
+                guard let self, self.phase.isBusy else { return }
+                self.phase = .staging(step)
+                if reportsToUser { self.setReport(step.label) }
+            }
+        }
+        settle(
+            .staged(current: current.raw, latest: version.raw),
+            announcement: "\(version.raw) 已下载完成，下次启动应用时生效",
+            reportsToUser: reportsToUser
+        )
+    }
+
+    /// Puts the runtime back that the new one replaced at launch, when the new
+    /// one failed to boot.
+    /// - Parameter server: the server whose boot outcome decides the rollback.
+    /// - Returns: true when a rollback ran, so the caller skips the update check.
+    private func restoreLaunchActivation(server: DshServer) async -> Bool {
+        guard let activation = await server.launchActivation else { return false }
+        await server.clearLaunchActivation()
+        guard case .failed(let reason) = await server.status else { return false }
+        guard activation.hasPrevious else {
+            logger.error("运行时 \(activation.version.raw, privacy: .public) 启动失败且无可回滚版本：\(reason, privacy: .public)")
+            return true
+        }
+
+        do {
+            _ = try RuntimeInstaller.rollback(layout: layout)
+            await server.restart()
+            await refreshRuntimeIdentity(server: server)
+            logger.error("运行时 \(activation.version.raw, privacy: .public) 启动失败，已回滚：\(reason, privacy: .public)")
+        } catch {
+            logger.error(
+                "运行时 \(activation.version.raw, privacy: .public) 启动失败且回滚失败：\(String(describing: error), privacy: .public)"
+            )
+        }
+        return true
+    }
+
+    /// Waits for dsh to reach a terminal state, because a rollback decision needs
+    /// the boot outcome and a launch check must not race the first launch.
     private func waitForBoot(server: DshServer) async {
         for _ in 0..<120 {
             let status = await server.status
@@ -154,88 +240,51 @@ final class RuntimeUpdater: ObservableObject {
         }
     }
 
-    private func confirmUpdate(current: RuntimeVersion, latest: RuntimeVersion) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "发现新版本"
-        alert.informativeText = """
-            当前版本：\(current.raw)
-            最新版本：\(latest.raw)
-
-            更新完成后本地服务会自动重启。
-            """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "立即更新")
-        alert.addButton(withTitle: "稍后")
-        return alert.runModal() == .alertFirstButtonReturn
+    /// Records a terminal phase and, for a user-initiated check, shows its
+    /// outcome in the banner until it dismisses itself.
+    private func settle(_ outcome: Phase, announcement: String, reportsToUser: Bool) {
+        phase = outcome
+        guard reportsToUser else { return }
+        announce(announcement)
     }
 
-    private func install(server: DshServer) async {
-        guard let target = available else { return }
-        guard let node = NodeRuntime.resolve() else {
-            fail("找不到 Node.js 运行时，无法安装更新。")
-            return
-        }
-        guard let tools = RuntimeInstaller.resolveToolsDirectory() else {
-            fail("应用包内缺少更新器脚本 (Contents/Resources/updater)，无法安装更新。")
-            return
-        }
-
-        let installer = RuntimeInstaller(layout: layout, node: node, toolsDirectory: tools)
-        phase = .installing(.preparing)
-        do {
-            _ = try await installer.install(version: target) { step in
-                Task { @MainActor [weak self] in self?.phase = .installing(step) }
-            }
-            phase = .installing(.restarting)
-            await server.restart()
-            await refreshRuntimeIdentity(server: server)
-
-            let status = await server.status
-            if case .failed(let reason) = status {
-                await restore(installer: installer, server: server, reason: reason)
-                return
-            }
-            available = nil
-            phase = .upToDate
-            logger.info("运行时更新完成 \(target.raw, privacy: .public)")
-        } catch {
-            let detail = (error as? RuntimeInstaller.Failure)?.description ?? error.localizedDescription
-            logger.error("运行时更新失败: \(detail, privacy: .public)")
-            fail(detail)
+    /// Shows a final banner message and schedules its dismissal.
+    /// - Parameter message: the text the banner carries.
+    private func announce(_ message: String) {
+        setReport(message)
+        reportDismissal = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.reportLifetime)
+            guard !Task.isCancelled else { return }
+            self?.report = nil
         }
     }
 
-    /// Puts the previous runtime back after the new one failed to boot.
-    private func restore(installer: RuntimeInstaller, server: DshServer, reason: String) async {
-        do {
-            _ = try installer.rollback()
-            await server.restart()
-            await refreshRuntimeIdentity(server: server)
-            fail("新运行时启动失败，已回滚到上一版本。\n\n原因：\(reason)")
-        } catch {
-            logger.error("回滚失败: \(String(describing: error), privacy: .public)")
-            fail("新运行时启动失败，且回滚失败。\n\n原因：\(reason)\n回滚错误：\(error.localizedDescription)")
+    /// Sets the banner text, discarding any dismissal still pending from an
+    /// earlier message. Every message is logged as well, so what the user was
+    /// told stays traceable after the banner has dismissed itself.
+    private func setReport(_ message: String?) {
+        reportDismissal?.cancel()
+        reportDismissal = nil
+        report = message
+        guard let message else { return }
+        logger.notice("提示条：\(message, privacy: .public)")
+    }
+
+    /// Label for the step the updater is on, as the banner shows it.
+    private var progressLabel: String {
+        switch phase {
+        case .checking: return "正在检查更新…"
+        case .staging(let step): return step.label
+        case .idle, .upToDate, .staged, .failed: return "更新流程运行中"
         }
     }
 
-    /// Records a failure and reports it, including where the logs are.
-    private func fail(_ message: String) {
-        phase = .failed(message)
-        present(
-            title: "运行时更新失败",
-            message: "\(message)\n\n日志目录：\(layout.logsDirectory.path)",
-            style: .warning
-        )
-    }
-
-    /// Shows a modal alert.
-    private func present(title: String, message: String, style: NSAlert.Style = .informational) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = style
-        alert.addButton(withTitle: "好")
-        alert.runModal()
+    /// Renders a thrown error as the text the user reads.
+    private func describe(_ error: Error) -> String {
+        if let failure = error as? ReleaseResolver.Failure { return failure.description }
+        if let failure = error as? RuntimeInstaller.Failure { return failure.description }
+        if let precondition = error as? Precondition { return precondition.description }
+        return error.localizedDescription
     }
 }
 

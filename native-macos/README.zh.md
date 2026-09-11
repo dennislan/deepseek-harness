@@ -23,8 +23,8 @@ DeepSeekHarness.app/
 2. 轮询 HTTP `/` 返回 200
 3. `ContentView` 在 `WKWebView` 中加载 `http://127.0.0.1:6080`
 4. JS Bridge (`nativeBridge`) 将 `window.nativeBridge.request()` 映射到 macOS API
-5. `RuntimeUpdater` 在后台检查是否有更新的 dsh 运行时，用户确认后安装到
-   `<DSH_HOME>/runtime` 并重启 dsh
+5. `RuntimeUpdater` 在后台检查是否有更新的 dsh 运行时并落盘到
+   `<DSH_HOME>/runtime`，由下一次启动在拉起 dsh 之前生效
 
 启动 dsh 前，应用会先终止仍占用所选端口的残留 dsh 进程。强制退出或崩溃可能
 让上一次运行的 dsh 子进程成为孤儿；若不回收，新启动的 dsh 会以 `EADDRINUSE`
@@ -53,7 +53,8 @@ DeepSeekHarness.app/
   显示日志尾部，而不是一个裸的退出码；运行时更新的 npm 输出写入
   `update-*.log`
 - `runtime/` — 可更新的 dsh 运行时（`dsh-root`）、被它替换的上一份
-  （`dsh-root.previous`）、共享的 npm 缓存（`.npm-cache`）与更新锁
+  （`dsh-root.previous`）、为下次启动准备好的运行时（`dsh-root.pending`）、
+  共享的 npm 缓存（`.npm-cache`）与更新锁
 
 profiles 与会话**不再**写入每次启动的临时目录 `/tmp/dsh-<pid>`：它们跨重启持久保留。
 
@@ -99,17 +100,20 @@ bundle 是自包含的：它在 `Contents/Resources/node` 下内嵌 Node.js 与 
 
 ## 运行时更新
 
-应用自行更新 dsh 运行时，用户无需重新打包或重新安装。
+应用自行更新 dsh 运行时，用户无需重新打包或重新安装。更新在后台完成并在下次启动
+生效：不弹窗、不需要点击，也不会在会话进行中重启 dsh。
 
 每次启动后、dsh 就绪时，应用会向 GitHub 询问最新 release tag，到 npm registry
 核验该版本确实存在（失败则回退 registry 的 `latest`），再与正在运行的运行时比较。
-只有发布版本更新时才会下载并弹出提示；网络或 registry 失败只记日志，本次启动照常。
+只有发布版本更新时才会下载；网络或 registry 失败只记日志，本次启动照常。
 
-同一次检查也可在应用菜单中手动触发：**检查更新…** 总会给出结果——`发现新版本`
-（附当前与目标版本）、替换运行时的 `正在更新`，或 `当前已是最新版本`。手动检查
-若无法访问 GitHub 或 registry，会明确报错而不是只写日志。
+同一次检查也可在应用菜单中手动触发。**检查更新…** 总会在窗口右上角的提示卡片上给出
+回答：安装中显示当前步骤（`下载并安装运行时`），若在一次运行尚未结束时点击则显示该运行
+正在进行的步骤，结束时给出结果——`当前已是最新版本`、`<version> 已下载完成，下次启动
+应用时生效`，或带原因与日志目录的失败信息。版本若已暂存，则直接汇报结果而不再安装一遍。
+提示卡不接收点击、不抢焦点，因此手动检查同样不会阻塞操作。
 
-用户确认后，应用会：
+发现新版本即安装，用户无需确认，应用会：
 
 1. 用内嵌 npm 把 `@deepseek-ai/dsh@<version>` 安装到
    `<DSH_HOME>/runtime/.staging-<uuid>`，并复用 `<DSH_HOME>/runtime/.npm-cache`，
@@ -119,11 +123,13 @@ bundle 是自包含的：它在 `Contents/Resources/node` 下内嵌 Node.js 与 
 3. 建立 `apps/cli` 与 `apps/web/dist` 桥接符号链接；
 4. 校验暂存运行时——`node apps/cli/lib/bin.js --version` 必须能加载模块图并
    打印出目标版本；
-5. 以目录重命名完成切换，把上一份运行时保留为 `dsh-root.previous`，然后重启 dsh。
+5. 以目录重命名把它发布为 `<DSH_HOME>/runtime/dsh-root.pending`。
 
-若新运行时启动失败，应用会把 `dsh-root.previous` 移回、重启 dsh，并连同日志目录
-一起报告失败原因。应用进程全程不退出，`.app` 包也不会被修改，因此代码签名与
-Gatekeeper 状态保持不变。运行时状态位于 `<DSH_HOME>/runtime`（默认
+下一次启动会在拉起 dsh 之前把 `dsh-root.pending` 改名为 `dsh-root`，并把被替换的
+那一份保留为 `dsh-root.previous`。更早切换会杀掉正在服务的会话，所以切换只等启动
+时机。若新运行时启动失败，应用改为把 `dsh-root.previous` 移回并重启 dsh，同时把
+失败原因与日志目录记入日志。应用进程全程不退出，`.app` 包也不会被修改，因此代码
+签名与 Gatekeeper 状态保持不变。运行时状态位于 `<DSH_HOME>/runtime`（默认
 `~/.dsh/runtime`），更新日志写入 `<DSH_HOME>/logs/update-*.log`。
 
 「关于」面板报告的是当前生效的运行时版本，而不是外壳的编译期版本，因此更新后
@@ -204,15 +210,16 @@ const yes = await nativeBridge.request('confirm', { title: 'Confirm', message: '
 ## 开发笔记
 
 - Swift 源码位于 `native-macos/App/`
-- `App/DeepSeekHarnessApp.swift` — 应用入口；启动 dsh 并触发更新检查
-- `App/ContentView.swift` — 带 WKWebView 容器与更新遮罩的 SwiftUI 视图
+- `App/DeepSeekHarnessApp.swift` — 应用入口；应用待生效运行时、启动 dsh 并触发更新检查
+- `App/ContentView.swift` — 带 WKWebView 容器与不阻塞操作的更新提示条的 SwiftUI 视图
 - `App/AboutPanel.swift` — 报告当前运行时版本的「关于」面板
-- `Server/DshServer.swift` — Node.js 子进程管理与运行时根解析
+- `Server/DshServer.swift` — Node.js 子进程管理、运行时根解析与待生效运行时激活
 - `Server/NodeRuntime.swift` — Node 与 npm 定位
 - `Update/RuntimeVersion.swift` — release tag 与语义化版本解析
 - `Update/RuntimeLayout.swift` — 运行时路径、锁与已安装版本读取
 - `Update/ReleaseResolver.swift` — GitHub release tag → npm registry 解析
-- `Update/RuntimeInstaller.swift` — 闭包安装、剪枝、校验、切换与回滚
-- `Update/RuntimeUpdater.swift` — 启动检查、确认框、进度与重启
+- `Update/RuntimeInstaller.swift` — 闭包安装、剪枝、校验、发布、激活与回滚
+- `Update/RuntimeUpdater.swift` — 启动检查、后台安装、回滚与提示条文案
+- `Tests/RuntimeUpdaterManualPathTests.swift` — 菜单检查的端到端断言,由 `Scripts/test-updater-manual-path.sh` 运行
 - `NativeBridge/BridgeManager.swift` — WKWebView ↔ Swift 消息桥
-- `bash native-macos/Scripts/test-updater-logic.sh` — 版本逻辑离线断言
+- `bash native-macos/Scripts/test-updater-logic.sh` — 版本与激活逻辑离线断言
