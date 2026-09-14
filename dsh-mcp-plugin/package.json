@@ -1,0 +1,80 @@
+{
+  "name": "dsh-mcp-plugin",
+  "version": "0.1.0",
+  "description": "Manage (add/modify/delete) MCP servers for DeepSeek Harness: persist a store, live-mount mcp-client bridges, expose mcp_list / mcp_add / mcp_modify / mcp_remove tools, and let the composer-dock picker steer each session toward one server's tools",
+  "type": "module",
+  "main": "lib/host.js",
+  "types": "lib/types/host.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/host.d.ts",
+      "default": "./lib/host.js"
+    },
+    "./client": {
+      "types": "./lib/types/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "files": [
+    "lib/host.js",
+    "lib/client.js",
+    "lib/store.js",
+    "lib/mount.js",
+    "lib/types.js",
+    "lib/index.js",
+    "lib/invariant.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "latest",
+    "@deepseek-ai/dsh-home-paths": "latest",
+    "@deepseek-ai/dsh-mcp-client": "latest",
+    "@deepseek-ai/dsh-tools": "latest",
+    "@deepseek-ai/schemastery": "latest"
+  },
+  "scripts": {
+    "build": "tsc --build --force && node scripts/build-client.mjs",
+    "build:client": "node scripts/build-client.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
+    "test": "vitest run -c ./vitest.config.ts"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "latest",
+    "@deepseek-ai/dsh-home-paths": "latest",
+    "@deepseek-ai/dsh-llm": "latest",
+    "@deepseek-ai/dsh-mcp-client": "latest",
+    "@deepseek-ai/dsh-system-prompt": "latest",
+    "@deepseek-ai/dsh-tools": "latest",
+    "@deepseek-ai/schemastery": "latest",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "react": "^18.3.0",
+    "typescript": "^5.0.0",
+    "vitest": "^3.0.0"
+  }
+}

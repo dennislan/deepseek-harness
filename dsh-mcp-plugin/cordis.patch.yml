@@ -1,0 +1,23 @@
+# dsh-mcp-plugin bundle patch
+#
+# One row: the host half exposes the mcp_list / mcp_add / mcp_modify /
+# mcp_remove tools, live-mounts a real dsh-mcp-client fiber per stored server
+# (so an added MCP server's tools become immediately callable and a removed
+# one's are unmounted), keeps per-session server preferences behind the
+# /api/mcp/pref routes, and contributes the mcp-server-preference prompt
+# context. The client half (auto-discovered via the package.json dsh.client
+# declaration) adds the settings page plus the composer-dock server picker.
+# Disabled by default so a profile can enable it selectively.
+#
+# To enable from your profile's cordis.patch.yml:
+#
+#   - id: dsh-mcp-plugin-host
+#     disabled: false
+#     config:
+#       storePath: '~/.dsh/mcp-servers.json'   # optional; defaults to $DSH_HOME/mcp-servers.json
+
+- insert:
+    - id: dsh-mcp-plugin-host
+      name: 'dsh-mcp-plugin'
+      disabled: true
+      config: {}
