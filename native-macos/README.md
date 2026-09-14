@@ -120,13 +120,16 @@ verifies that version exists on the npm registry (falling back to the registry's
 unless the published version is newer; a network or registry failure is logged
 and the launch continues.
 
-The same check is available on demand from the app menu. **检查更新…** always answers
-in a card in the top-right corner of the window: the step it is on while it installs
-(`下载并安装运行时`), that step when a check is clicked while another run is still in
-flight, or its outcome — `当前已是最新版本`, `<version> 已下载完成，下次启动应用时生效`,
-or a failure with the reason and the log directory. A version that is already staged
-is reported instead of installed again. The banner takes no clicks and steals no
-focus, so even an explicit check cannot block work.
+The same check is available on demand from the app menu. **检查更新…** answers in a card
+in the top-right corner of the window, and only once there is something to say: a check
+still in flight shows nothing at all, a newer release is offered as
+`发现新版本 <version>，是否更新？` with a blue download symbol and stays on screen while
+the runtime installs — the install steps go to the log instead of replacing it — and every
+outcome is reported, `当前已是最新版本` and `<version> 已下载完成，下次启动应用时生效` with a
+green check, or a failure with the reason and the log directory. A check clicked while
+another run is in flight reports that run's step, and a version that is already staged is
+reported instead of installed again. The banner takes no clicks and steals no focus, so
+even an explicit check cannot block work.
 
 A newer version is installed without asking, and the app:
 

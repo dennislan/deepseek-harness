@@ -16,12 +16,13 @@ struct ContentView: View {
         VStack(spacing: 0) {
             content
         }
-        // 提示条只承载用户主动发起的检查结果：更新在后台准备、下次启动生效，
-        // 界面不做任何遮罩，用户始终可以继续操作。停在右上角——底边在实测中
-        // 几乎没人注意到，而菜单栏在顶端，视线本来就在上半屏。
+        // 提示条只承载用户主动发起的检查的结论：点击本身不再弹"正在检查"，发现新版本
+        // 时给出带版本号的更新询问并保持到安装结束（安装步骤只写日志），其余情况给出结果。
+        // 更新在后台准备、下次启动生效，界面不做任何遮罩，用户始终可以继续操作。停在右上
+        // 角——底边在实测中几乎没人注意到，而菜单栏在顶端，视线本来就在上半屏。
         .overlay(alignment: .topTrailing) {
             if let report = updater.report {
-                UpdateBanner(message: report)
+                UpdateBanner(message: report, style: updater.bannerStyle)
                     .padding(.top, 16)
                     .padding(.trailing, 16)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -247,13 +248,15 @@ struct WebViewContainer: NSViewRepresentable {
 /// running session keeps receiving every event while it is on screen. The card
 /// sits in the window's top-right corner and wraps rather than growing into a
 /// full-width strip, so a long failure message with a log path stays readable.
+/// It only ever carries something worth reading: the release on offer, or the
+/// outcome of a check — never a message that only says a check is running.
 private struct UpdateBanner: View {
     let message: String
+    let style: RuntimeUpdater.BannerStyle
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(.secondary)
+            icon
             Text(message)
                 .font(.callout)
                 .multilineTextAlignment(.leading)
@@ -266,4 +269,32 @@ private struct UpdateBanner: View {
         .shadow(radius: 8)
         .allowsHitTesting(false)
     }
+
+    /// The icon next to the text: a spinner while an install the user did not ask
+    /// for is in flight, the blue download symbol for the newer release the banner
+    /// offers, a green check for the two outcomes the user would want — nothing new
+    /// to do, or a newer runtime waiting for the next launch — and the plain
+    /// refresh symbol when the check could not finish.
+    @ViewBuilder
+    private var icon: some View {
+        switch style {
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.8)
+        case .available:
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundStyle(Self.availableTint)
+        case .success:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failure:
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Blue for the release on offer — the app's primary color, so "有新版本可装"
+    /// never reads as the green "已完成" state that the success icon owns.
+    private static let availableTint = Color(red: 37 / 255, green: 99 / 255, blue: 235 / 255)
 }

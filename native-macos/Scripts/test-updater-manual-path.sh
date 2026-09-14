@@ -4,9 +4,11 @@
 #
 # Runs RuntimeUpdater against a scratch DSH_HOME seeded with an older runtime,
 # so clicking 检查更新… installs the newest published runtime exactly as the app
-# does. Asserts that a click during the run reports progress instead of being
-# dropped silently, that the run ends with a definite outcome, and that a later
-# click reuses what is already staged instead of reinstalling it.
+# does. Asserts that a click on a newer release offers it — with its version and
+# without any "checking" message — and keeps offering it while it installs, that
+# a click during the run reports that run instead of being dropped silently, that
+# the run ends with a definite outcome, and that a later click reuses what is
+# already staged instead of reinstalling it.
 #
 # Needs network, Node.js 22+ with npm, and about a minute. The offline logic
 # assertions are test-updater-logic.sh.

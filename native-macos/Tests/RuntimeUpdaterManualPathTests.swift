@@ -34,14 +34,35 @@ struct RuntimeUpdaterManualPathTests {
         let serving = await server.runtimeVersion()?.raw
         expect(serving != nil, "种子运行时版本可读，实际 \(serving ?? "nil")")
 
-        // MARK: A click during a run in flight reports progress
+        /// Banner text the click produces. Nothing is shown while the check runs,
+        /// so the first text that appears is the release the check found.
+        func firstReport() async -> String? {
+            for _ in 0..<240 {
+                if let text = await MainActor.run(body: { updater.report }) { return text }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            return nil
+        }
+
+        // MARK: A click on a newer release offers it, and keeps offering it while it installs
 
         let inFlight = Task { @MainActor in
             await updater.checkForUpdates(server: server)
         }
+        let offered = await firstReport()
+        expect(
+            offered?.contains("发现新版本") == true && offered?.contains("是否更新") == true,
+            "发现新版本时应给出带版本号的更新询问，实际 \(offered ?? "nil")"
+        )
+
         try? await Task.sleep(nanoseconds: 4_000_000_000)
-        let during = await MainActor.run { updater.report }
-        expect(during != nil, "安装进行中应显示进度，实际 nil")
+        let duringInstall = await MainActor.run { updater.report }
+        expect(
+            duringInstall == offered,
+            "安装步骤只写日志，更新询问应保持到安装结束，实际 \(duringInstall ?? "nil")"
+        )
+
+        // MARK: A click during a run in flight reports that run
 
         await updater.checkForUpdates(server: server)
         let concurrent = await MainActor.run { updater.report }
