@@ -207,17 +207,15 @@ final class RuntimeUpdater: ObservableObject {
                 return
             }
             if reportsToUser {
-                // The offer is the click's answer. It stays on screen while that
-                // release installs — without a dismissal timer, because a long
-                // install must not leave the banner empty — and the steps of the
-                // run go to the log instead of replacing what the user is being
-                // told.
-                setReport("发现新版本 \(resolution.version.raw)，是否更新？", style: .available)
+                // Banner shows the version being installed and the current step
+                // as it progresses, without a dismissal timer: a long install
+                // must not leave the banner empty.
+                setReport("正在更新到 \(resolution.version.raw)…", style: .checking)
             }
-            try await stage(version: resolution.version)
+            try await stage(version: resolution.version, showProgress: reportsToUser)
             settle(
                 .staged(current: current.raw, latest: resolution.version.raw),
-                announcement: "\(resolution.version.raw) 已下载完成，下次启动应用时生效",
+                announcement: "\(resolution.version.raw) 已更新成功，下次启动生效",
                 style: .success,
                 reportsToUser: reportsToUser
             )
@@ -235,23 +233,28 @@ final class RuntimeUpdater: ObservableObject {
 
     /// Builds `version` in the background and publishes it for the next launch.
     ///
-    /// The steps of the run are logged rather than announced, and the outcome is
-    /// left to the caller: the banner keeps showing the release the user was
-    /// offered, so the message that answered the click is still there when the run
-    /// settles.
-    private func stage(version: RuntimeVersion) async throws {
+    /// When `showProgress` is true each step updates the banner with the version
+    /// and step label so the user can see what is happening; otherwise steps
+    /// are only logged.
+    private func stage(version: RuntimeVersion, showProgress: Bool) async throws {
         guard let node = NodeRuntime.resolve() else { throw Precondition.nodeMissing }
         guard let tools = RuntimeInstaller.resolveToolsDirectory() else { throw Precondition.toolsMissing }
 
         let installer = RuntimeInstaller(layout: layout, node: node, toolsDirectory: tools)
         phase = .staging(.preparing)
-        _ = try await installer.stage(version: version) { step in
-            Task { @MainActor [weak self] in
+        if showProgress {
+            setReport("正在更新到 \(version.raw)：\(InstallStep.preparing.label)", style: .checking)
+        }
+        _ = try await installer.stage(version: version) { [weak self] step in
+            Task { @MainActor in
                 // A step reported after the run settled must not put the updater
                 // back into a busy phase, which would drop every later check.
                 guard let self, self.phase.isBusy else { return }
                 self.phase = .staging(step)
                 logger.notice("安装步骤：\(step.label, privacy: .public)")
+                if showProgress {
+                    self.setReport("正在更新到 \(version.raw)：\(step.label)", style: .checking)
+                }
             }
         }
     }

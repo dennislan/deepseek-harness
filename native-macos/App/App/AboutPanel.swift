@@ -1,19 +1,20 @@
 import AppKit
+import SwiftUI
 
-/// Builds the application's About panel.
+/// Builds and presents the application's About window.
 ///
-/// The displayed version is the dsh runtime in effect, not the Swift shell's
+/// A compact custom panel in place of the standard AppKit one: the app icon,
+/// the name, a single version line, and one contact line. The displayed
+/// version is the dsh runtime in effect, not the Swift shell's
 /// `CFBundleShortVersionString`: an update replaces the runtime without
 /// rebuilding the app, so the runtime version is the one that must stay current.
 enum AboutPanel {
     /// Values the panel shows, built when the menu item is chosen.
     struct Info {
-        /// Version of the Swift shell, from the bundle.
-        let shellVersion: String
-        /// Version of the runtime in effect, or nil when unreadable.
+        /// Version of the dsh runtime in effect; nil when unreadable.
         let runtimeVersion: String?
-        /// Directory the runtime in effect was loaded from.
-        let runtimePath: String
+        /// Version of the Swift shell, from the bundle; shown when the runtime version is unreadable.
+        let shellVersion: String
     }
 
     /// Version of the Swift shell, read from the bundle's Info.plist.
@@ -21,23 +22,59 @@ enum AboutPanel {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
-    /// Shows the standard About panel with the runtime version as the app version.
-    /// - Parameter info: build it at click time so it reflects the runtime
-    ///   installed most recently.
+    /// Presents the About window. Pass an `Info` built at click time so it
+    /// reflects the runtime installed most recently.
+    @MainActor
     static func present(_ info: Info) {
-        let details = NSMutableAttributedString(
-            string: "Developed by Dennis \n\ndennis.lan@gmail.com",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ]
-        )
+        let view = AboutView(info: info)
+            .frame(width: 280)
 
-        NSApplication.shared.orderFrontStandardAboutPanel(options: [
-            .applicationName: "DeepSeek Harness",
-            .applicationVersion: info.runtimeVersion ?? info.shellVersion,
-            .credits: details,
-        ])
-        NSApplication.shared.activate(ignoringOtherApps: true)
+        let hosting = NSHostingController(rootView: view)
+        hosting.sizingOptions = [.preferredContentSize]
+
+        let window = NSWindow(contentViewController: hosting)
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.title = "关于"
+        window.isReleasedWhenClosed = false
+        window.isMovableByWindowBackground = true
+        window.center()
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+}
+
+/// The compact body of the About window: icon, name, version, contact.
+private struct AboutView: View {
+    let info: AboutPanel.Info
+
+    /// "版本 1.2.3", falling back to the shell version when the runtime is unreadable.
+    private var versionLine: String {
+        "版本 \(info.runtimeVersion ?? info.shellVersion)"
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            if let icon = NSApp.applicationIconImage {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 72, height: 72)
+            }
+
+            Text("DeepSeek Harness")
+                .font(.title3)
+                .fontWeight(.semibold)
+
+            Text(versionLine)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Text("dennis.lan@gmail.com")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.top, -6)
+        }
+        .padding(24)
     }
 }

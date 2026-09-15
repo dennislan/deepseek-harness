@@ -40,9 +40,8 @@ struct DeepSeekHarnessApp: App {
                     Task { @MainActor in
                         await updater.refreshRuntimeIdentity(server: server)
                         AboutPanel.present(AboutPanel.Info(
-                            shellVersion: AboutPanel.shellVersion,
                             runtimeVersion: updater.runtimeVersion,
-                            runtimePath: updater.runtimePath
+                            shellVersion: AboutPanel.shellVersion
                         ))
                     }
                 }
