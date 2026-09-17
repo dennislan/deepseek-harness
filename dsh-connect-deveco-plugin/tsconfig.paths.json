@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.standalone.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "paths": {
+      "@deepseek-ai/dsh-llm": ["../packages/llm/llm/src/index.ts"],
+      "@deepseek-ai/dsh-brand": ["../packages/util/brand/src/index.ts"],
+      "@deepseek-ai/cordis": ["../vendor/cordis/src/index.ts"],
+      "@deepseek-ai/schemastery": ["../vendor/schemastery/src/index.ts"]
+    },
+    "noEmit": true
+  }
+}

@@ -1,0 +1,29 @@
+# dsh-connect-deveco bundle patch
+#
+# One row: the host half reads the locally signed-in DevEco Code (`deveco` CLI)
+# credential, registers the `deveco` provider route on ctx.llm, and serves model
+# requests through the CodeGenie MaaS gateway.
+#
+# The row ships disabled. Enable it in your profile's cordis.patch.yml and, if
+# you need to override discovery, add config beneath it:
+#
+#   - id: dsh-connect-deveco
+#     disabled: false
+#     config:
+#       displayName: DevEco Code
+#       baseUrl: https://cn.devecostudio.huawei.com
+#       authFile: '/Users/me/.local/share/deveco/auth.json'  # pin one credential file
+#       catalogTtlSeconds: 900
+#       requestTimeoutSeconds: 300
+#       models: ['GLM-5.3', 'GLM-5.1']   # advertise instead of discovering
+#
+# Every field is optional. With an empty config the row resolves the default
+# credential locations for the current platform and discovers the model catalog
+# from the gateway. `deveco` itself must have been logged in at least once; the
+# plugin never invokes the CLI.
+
+- insert:
+    - id: dsh-connect-deveco
+      name: 'dsh-connect-deveco'
+      disabled: true
+      config: {}

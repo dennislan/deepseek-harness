@@ -1,0 +1,71 @@
+{
+  "name": "dsh-connect-deveco",
+  "version": "0.1.0",
+  "description": "Connect locally signed-in DevEco Code (deveco CLI) models to DeepSeek Harness",
+  "type": "module",
+  "main": "lib/host.js",
+  "types": "lib/types/host.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/host.d.ts",
+      "default": "./lib/host.js"
+    },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "cli": {
+      "bin": "dsh-connect-deveco"
+    }
+  },
+  "bin": {
+    "dsh-connect-deveco": "lib/cli.js"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.js.map",
+    "lib/**/*.d.ts",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "deveco",
+    "deveco-code",
+    "harmonyos"
+  ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.standalone.json && tsdown --config tsdown.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.standalone.json",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@types/node": "^22.0.0",
+    "tsdown": "^0.23.0",
+    "typescript": "^5.0.0",
+    "vitest": "^3.0.0"
+  }
+}
