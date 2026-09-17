@@ -20,7 +20,8 @@ immediately as `mcp__<serverName>__<tool>` — and removing the server unmounts 
 - **Live mounting** — on `add`/`modify`/load the plugin mounts a child mcp-client fiber under
   its own context (`ctx.plugin`). The fiber is disposed on `remove`/`modify` and unwinds with
   the plugin on teardown. On plugin load every stored server is re-mounted, so the set
-  survives a restart.
+  survives a restart. A stored server that fails to mount is contained: it is reported
+  offline with its `lastError` instead of failing the load.
 - **Transports** — `stdio` (spawned child process: `command`/`args`/`env`/`cwd`) and
   `streamable-http` (remote endpoint: `url`/`headers`), matching mcp-client.
 - **Per-session server choice** — the client half also registers a compact picker on
@@ -35,6 +36,12 @@ immediately as `mcp__<serverName>__<tool>` — and removing the server unmounts 
 A server that is down on `add` does not fail the call (the mcp-client default
 `failOnStartupError: false` is used); its reconnect loop keeps trying and its tools appear
 when a connection succeeds. `mcp_list` reports each server as `connected` or `connecting`.
+
+Startup is never blocked by a single server either: a stored server whose mount rejects — a
+deleted `npx` cache path, a stopped database, a mistyped command — is contained to itself,
+logged, and surfaced through `mcp_list` and `/api/mcp/list` as that server's `lastError`
+(with its cause chain, e.g. `spawn /…/mcp-server-postgres ENOENT`). The profile still boots
+and the server stays visible as offline until it is fixed with `mcp_modify`.
 
 ## Enable
 
@@ -83,11 +90,21 @@ npm run build         # emit lib/ (host tsc + client tsdown bundle)
 npm test              # live-mount + per-session-preference integration tests
 ```
 
+## Compatibility
+
+This plugin targets the **0.1.6-alpha.1** release of DeepSeek Harness: its
+`peerDependencies` are pinned to that release — `@deepseek-ai/dsh-mcp-client`,
+`@deepseek-ai/dsh-tools`, `@deepseek-ai/dsh-system-prompt`, `@deepseek-ai/dsh-llm`
+at `^0.1.6-alpha.1`, `@deepseek-ai/cordis` at `^4.0.2`, `@deepseek-ai/schemastery`
+at `^3.18.2`. The npm registry's `latest` dist-tag points at an older release,
+so do not install the harness packages with `latest` when building this plugin
+against the 0.1.6-alpha.1 toolchain.
+
 ## Known Limitations and Deferred Work
 
 - Status is derived from registered `mcp__<name>__*` tools, not the mcp-client's internal
   connection state, so a server between reconnects reports `connecting` rather than the exact
-  error.
+  error; only a mount that rejected carries a `lastError`.
 - A downed server keeps its reconnect loop alive; `mcp_remove` clears the fiber so no
   background work remains.
 - The per-session server preference is in-memory only: it is not persisted to the store and

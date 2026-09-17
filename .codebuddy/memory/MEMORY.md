@@ -29,3 +29,8 @@
 - **应用外的更新器/测试如何找到打包资源**：`RuntimeInstaller.resolveToolsDirectory()` 只在应用包内找 `Contents/Resources/updater`，包外则从可执行文件向上找 `native-macos/Scripts/assemble-runtime.mjs`；`NodeRuntime.bundled()` 只认包内 `node/bin/node`。因此**在仓库外运行这类二进制会退化**（用 homebrew node、找不到剪枝脚本），验证脚本要把二进制编译到 `native-macos/.build/`。
 - macOS 应用的更新器有两条可复现验证：离线 `native-macos/Scripts/test-updater-logic.sh`（版本/激活断言，无需网络）与联网 `native-macos/Scripts/test-updater-manual-path.sh`（驱动真实的手动更新路径，约 1 分钟，用临时 `DSH_HOME`；加 `KEEP_SCRATCH=1` 保留现场便于排查）。
 - **手动更新的结果提示在窗口右上角**（`ContentView` 的 `.overlay(alignment: .topTrailing)` + `UpdateBanner` 卡片，380 点内换行，仍 `allowsHitTesting(false)`）：底部位置实测被用户忽略，菜单栏在顶端所以视线在上半屏。改这类「用户看不到」的反馈位置时，优先跟着用户操作入口（菜单）所在的一侧。
+
+## dsh-mcp-plugin（仓库顶层独立插件，不在 packages/ 门禁范围）
+
+- 构建与部署走 `dsh-mcp-plugin/scripts/deploy.sh [--force]`：tsc 出 `lib/`（host）+ `scripts/build-client.mjs`（client bundle），再拷到 `~/.dsh/profiles/web/node_modules/dsh-mcp-plugin/lib`。测试 `./node_modules/.bin/vitest run -c ./vitest.config.ts`（依赖 `scripts/setup-deps.sh` 建好的 symlink）。跑 vitest 时把输出重定向到文件再读，直接跑会被 IDE 当成 watch 命令。
+- MCP server 定义在 `~/.dsh/mcp-servers.json`（`{version, servers:{<name>: mcp-client Config}}`），持久化的是**绝对路径 command 时很脆弱**——用户那次 `postgres` 指向 `~/.npm/_npx/<hash>/node_modules/.bin/mcp-server-postgres`，npx 缓存被清理后整个 profile 起不来。恢复后：`McpManager.restore()` 对单个 server 的挂载失败是隔离的（记 `lastError` 并 warn），不再拒绝 loader entry。

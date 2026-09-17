@@ -29,6 +29,7 @@ link_pkg() {
 link_pkg "@deepseek-ai/cordis"        "vendor/cordis"
 link_pkg "@deepseek-ai/schemastery"   "vendor/schemastery"
 link_pkg "@deepseek-ai/dsh-mcp-client" "packages/mcp/mcp-client"
+link_pkg "@deepseek-ai/dsh-mcp-resources" "packages/mcp/mcp-resources"
 link_pkg "@deepseek-ai/dsh-tools"      "packages/core/tools"
 link_pkg "@deepseek-ai/dsh-system-prompt" "packages/core/system-prompt"
 link_pkg "@deepseek-ai/dsh-llm"        "packages/llm/llm"

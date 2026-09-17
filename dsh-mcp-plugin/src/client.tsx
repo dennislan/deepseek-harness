@@ -40,6 +40,8 @@ interface McpRecord {
   serverName: string
   connected: boolean
   toolCount: number
+  /** Host-side message of the last failed mount; absent while it never failed. */
+  lastError?: string
   spec: {
     serverName?: string
     transport?: 'stdio' | 'streamable-http'
@@ -309,12 +311,16 @@ function McpPanel({ timer }: PanelProps) {
         {servers.length === 0 && <li className="dsh-mcp-empty">暂无 MCP 服务器。</li>}
         {servers.map((s) => (
           <li key={s.serverName} className="dsh-mcp-row">
-            <span className={`dsh-mcp-dot${s.connected ? ' on' : ''}`} title={s.connected ? '已连接' : '连接中'} />
+            <span className={`dsh-mcp-dot${s.connected ? ' on' : s.lastError !== undefined ? ' err' : ''}`}
+              title={s.connected ? '已连接' : s.lastError ?? '连接中'} />
             <span className="dsh-mcp-name">{s.serverName}</span>
             <span className="dsh-mcp-tag">
               {s.spec?.transport === 'streamable-http' ? 'SSE' : s.spec?.transport ?? '未知'}
             </span>
             <span className="dsh-mcp-tools">{s.toolCount} 个工具</span>
+            {s.lastError !== undefined && (
+              <span className="dsh-mcp-row-err" title={s.lastError}>连接失败：{s.lastError}</span>
+            )}
             <span className="dsh-mcp-actions">
               <button type="button" onClick={() => startEdit(s)}>编辑</button>
               <button type="button" className="danger" onClick={() => remove(s)}>删除</button>
@@ -381,6 +387,8 @@ const CSS = [
   '.dsh-mcp-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid rgba(128,128,128,.2);border-radius:8px}',
   '.dsh-mcp-dot{width:9px;height:9px;border-radius:50%;background:#888;flex:none}',
   '.dsh-mcp-dot.on{background:#3aa76d}',
+  '.dsh-mcp-dot.err{background:#c05656}',
+  '.dsh-mcp-row-err{font-size:12px;color:#c05656;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help}',
   '.dsh-mcp-name{font-weight:600}',
   '.dsh-mcp-tag{font-size:11px;padding:1px 6px;border-radius:4px;background:rgba(128,128,128,.15)}',
   '.dsh-mcp-tools{font-size:12px;opacity:.7}',
@@ -503,7 +511,8 @@ function McpPickerDock({ sessionId, timer }: DockProps & { timer: DockTimer }) {
           aria-pressed={selected === server.serverName}
           onClick={() => { void pick(selected === server.serverName ? null : server.serverName) }}
         >
-          <span className={`dot${server.connected ? ' on' : ''}`} title={server.connected ? '已连接' : '连接中'} />
+          <span className={`dot${server.connected ? ' on' : server.lastError !== undefined ? ' err' : ''}`}
+            title={server.connected ? '已连接' : server.lastError ?? '连接中'} />
           <span className="dsh-mcp-chip-name">{server.serverName}</span>
           <span className="dsh-mcp-chip-tools">{server.toolCount}</span>
         </button>
@@ -525,6 +534,7 @@ const DOCK_CSS = [
   '.dsh-mcp-chip.on{border-color:rgba(58,167,109,.7);background:rgba(58,167,109,.14)}',
   '.dsh-mcp-chip .dot{width:7px;height:7px;border-radius:50%;background:#888;flex:none}',
   '.dsh-mcp-chip .dot.on{background:#3aa76d}',
+  '.dsh-mcp-chip .dot.err{background:#c05656}',
   '.dsh-mcp-chip-name{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.dsh-mcp-chip-tools{font-size:11px;opacity:.55}',
   '.dsh-mcp-dock-note{opacity:.6;flex:none}',

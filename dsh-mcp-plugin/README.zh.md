@@ -17,7 +17,8 @@ server 时这些工具也同时被卸载。
   会把文件归一化为原生 `{ version, servers }` 信封。
 - **实时挂载** — 在 `add`/`modify`/加载时，插件在自身上下文中挂载一个子 mcp-client fiber
   （`ctx.plugin`）。`remove`/`modify` 时销毁该 fiber，插件销毁时随之卸载。加载时重新挂载
-  所有已存 server，使配置在重启后依然有效。
+  所有已存 server，使配置在重启后依然有效。挂载失败的已存 server 会被隔离：它只被标记为
+  离线并带上 `lastError`，不会让加载失败。
 - **传输** — `stdio`（派生子进程：`command`/`args`/`env`/`cwd`）与
   `streamable-http`（远端端点：`url`/`headers`），与 mcp-client 对齐。
 - **按会话选择 server** — 客户端还会在 `conversation.composer.dock`（聊天输入框下方的环境行）
@@ -31,6 +32,12 @@ server 时这些工具也同时被卸载。
 新增时若 server 暂不可用，调用不会失败（沿用 mcp-client 默认的 `failOnStartupError:
 false`）；其重连循环会持续尝试，连接成功即出现工具。`mcp_list` 会把每个 server 标记为
 `connected` 或 `connecting`。
+
+启动同样不会被单个 server 卡住：已存 server 若挂载失败（例如 `npx` 缓存路径已被清理、
+数据库未启动、命令写错），失败被隔离在该 server 内——记录日志，并通过 `mcp_list` 与
+`/api/mcp/list` 以该 server 的 `lastError` 暴露（含 cause 链，例如
+`spawn /…/mcp-server-postgres ENOENT`）。profile 照常启动，该 server 显示为离线，
+直到用 `mcp_modify` 修好它。
 
 ## 启用
 
@@ -77,10 +84,19 @@ npm run build         # 产出 lib/（host tsc + client tsdown 打包）
 npm test              # 实时挂载 + 按会话偏好的集成测试
 ```
 
+## 兼容性
+
+本插件针对 **0.1.6-alpha.1** 版本的 DeepSeek Harness：其 `peerDependencies` 已锁定到
+该版本 —— `@deepseek-ai/dsh-mcp-client`、`@deepseek-ai/dsh-tools`、
+`@deepseek-ai/dsh-system-prompt`、`@deepseek-ai/dsh-llm` 为 `^0.1.6-alpha.1`，
+`@deepseek-ai/cordis` 为 `^4.0.2`，`@deepseek-ai/schemastery` 为 `^3.18.2`。
+npm registry 的 `latest` dist-tag 指向更早的版本，因此在基于 0.1.6-alpha.1 工具链构建
+本插件时，请勿用 `latest` 安装这些 harness 包。
+
 ## 已知限制与待办
 
 - 状态由已注册的 `mcp__<name>__*` 工具数推断，而非 mcp-client 内部连接状态；因此重连中的
-  server 报 `connecting`，而非具体错误。
+  server 报 `connecting`，而非具体错误；只有挂载被拒绝的 server 才带 `lastError`。
 - 不可用的 server 会保留其重连循环；`mcp_remove` 会清掉 fiber，不留后台任务。
 - 按会话的 server 偏好仅存内存：不写入 store，重启后需重新选择。选择仍处于 `connecting`
   的 server 只会影响提示词偏好，其工具要等重连成功后才真正可调用。

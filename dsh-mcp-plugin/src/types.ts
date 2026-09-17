@@ -23,6 +23,11 @@ export interface McpServerRecord {
   connected: boolean
   /** Number of `mcp__<serverName>__*` tools currently registered. */
   toolCount: number
+  /**
+   * Message of the last failed mount (spawn failure, refused connection, …),
+   * present only while the server has never mounted successfully since.
+   */
+  lastError?: string
 }
 
 /** The on-disk store envelope. */

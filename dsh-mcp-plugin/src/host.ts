@@ -75,6 +75,8 @@ export class McpManager extends Service {
   private store: Record<string, McpServerSpec> = {}
   /** Live mcp-client fibers currently mounted, keyed by serverName. */
   private readonly mounts = new Map<string, LiveMount>()
+  /** Message of the last failed mount per serverName; cleared on a good mount. */
+  private readonly errors = new Map<string, string>()
   /** In-flight mutation promise per serverName (serialization latch). */
   private readonly inFlight = new Map<string, Promise<unknown>>()
   /**
@@ -106,14 +108,16 @@ export class McpManager extends Service {
 
   /**
    * Load the store and re-mount every stored server, so a persisted set survives
-   * a restart. Each mount is awaited; with the default `failOnStartupError:
-   * false` a downed server does not reject, its reconnect loop keeps running.
+   * a restart. A stored server can never refuse the boot: a mount that rejects
+   * — an unreachable server, a deleted `npx` cache path, a stopped database —
+   * is contained to that one server, recorded as its `lastError`, and logged,
+   * so the plugin (and with it the whole profile) still starts and the failing
+   * server is reported offline instead of blocking startup. Mounts run
+   * concurrently, so a slow endpoint cannot delay startup behind another.
    */
   async restore(): Promise<void> {
     await this.load()
-    for (const spec of Object.values(this.store)) {
-      await this.mountOne(spec)
-    }
+    await Promise.all(Object.values(this.store).map(spec => this.mountOne(spec, { fatal: false })))
   }
 
   // ---- Public operations --------------------------------------------------
@@ -132,7 +136,7 @@ export class McpManager extends Service {
       const spec = assembleSpec(input)
       this.store[input.serverName] = spec
       this.persist()
-      await this.mountOne(spec)
+      await this.mountOne(spec, { fatal: true })
       return this.record(input.serverName)
     })
   }
@@ -159,7 +163,7 @@ export class McpManager extends Service {
         this.mounts.delete(serverName)
         await unmountServer(prior)
       }
-      await this.mountOne(spec)
+      await this.mountOne(spec, { fatal: true })
       return this.record(serverName)
     })
   }
@@ -180,6 +184,7 @@ export class McpManager extends Service {
         await unmountServer(mount)
       }
       delete this.store[serverName]
+      this.errors.delete(serverName)
       // A removed server must not keep steering sessions: drop its preferences.
       for (const [sessionId, preferred] of this.preferences) {
         if (preferred === serverName) this.preferences.delete(sessionId)
@@ -228,11 +233,28 @@ export class McpManager extends Service {
 
   // ---- Internals ----------------------------------------------------------
 
-  /** Mount `spec` and remember its fiber under its `serverName`. */
-  private async mountOne(spec: McpServerSpec): Promise<LiveMount> {
-    const mount = await mountServer(this.ctx, spec)
-    this.mounts.set(spec.serverName, mount)
-    return mount
+  /**
+   * Mount `spec` and remember its fiber under its `serverName`.
+   * @param spec - the mount-ready definition.
+   * @param options - `fatal: true` rethrows a failed mount (a user-initiated
+   *   `mcp_add`/`mcp_modify` reports the failure to its caller); `fatal: false`
+   *   contains it, recording the message as the server's `lastError` so the
+   *   caller's startup continues with that server simply offline.
+   * @returns the live mount, or undefined when a non-fatal mount failed.
+   */
+  private async mountOne(spec: McpServerSpec, options: { fatal: boolean }): Promise<LiveMount | undefined> {
+    try {
+      const mount = await mountServer(this.ctx, spec)
+      this.mounts.set(spec.serverName, mount)
+      this.errors.delete(spec.serverName)
+      return mount
+    } catch (err) {
+      const message = errorMessage(err)
+      this.errors.set(spec.serverName, message)
+      this.ctx.logger.warn(`dsh-mcp-plugin: server "${spec.serverName}" failed to mount: ${message}`)
+      if (options.fatal) throw err
+      return undefined
+    }
   }
 
   /** Best-effort persist; a failed write leaves memory authoritative. */
@@ -247,11 +269,13 @@ export class McpManager extends Service {
     const spec = this.store[serverName]
     const mount = this.mounts.get(serverName)
     const toolCount = mount !== undefined ? toolsForServer(this.ctx, serverName) : 0
+    const lastError = this.errors.get(serverName)
     return {
       serverName,
       spec,
       connected: mount !== undefined && toolCount > 0,
       toolCount,
+      ...(lastError === undefined ? {} : { lastError }),
     }
   }
 
@@ -281,6 +305,8 @@ interface ServerListEntry {
   transport: string
   connected: boolean
   toolCount: number
+  /** Message of the last failed mount, present only when one is recorded. */
+  error?: string
 }
 
 function toResult(record: McpServerRecord): ServerResult {
@@ -309,6 +335,7 @@ function mcpListTool(manager: McpManager) {
                 transport: { type: 'string' },
                 connected: { type: 'boolean' },
                 toolCount: { type: 'integer' },
+                error: { type: 'string' },
               },
             },
           },
@@ -318,7 +345,8 @@ function mcpListTool(manager: McpManager) {
         const entries = (value as { servers: ServerListEntry[] }).servers
         const lines = entries.length
           ? entries.map(e =>
-              `${e.serverName} [${e.transport}] ${e.connected ? 'connected' : 'connecting'} (${e.toolCount} tool${e.toolCount === 1 ? '' : 's'})`)
+              `${e.serverName} [${e.transport}] ${e.connected ? 'connected' : 'connecting'} (${e.toolCount} tool${e.toolCount === 1 ? '' : 's'})`
+              + (e.error === undefined ? '' : ` — last error: ${e.error}`))
           : '(no MCP servers registered)'
         return [{ type: 'text', text: `MCP servers:\n${lines}` }]
       },
@@ -329,6 +357,7 @@ function mcpListTool(manager: McpManager) {
         transport: r.spec.transport,
         connected: r.connected,
         toolCount: r.toolCount,
+        ...(r.lastError === undefined ? {} : { error: r.lastError }),
       })) satisfies ServerListEntry[],
     }),
   })
@@ -540,8 +569,26 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-/** A stable, loggable message for a rejected mutation. */
+/**
+ * A stable, loggable message for a rejected mutation or a failed mount. The
+ * `cause` chain is flattened into the message: an mcp-client startup failure
+ * only names its transport in `message`, and the actionable part (a spawn
+ * `ENOENT` with the missing path) sits in its cause.
+ */
 function errorMessage(err: unknown): string {
+  const parts: string[] = []
+  const seen = new Set<unknown>()
+  let current: unknown = err
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    seen.add(current)
+    parts.push(messageOf(current))
+    current = (current as { cause?: unknown }).cause
+  }
+  return parts.join(': ')
+}
+
+/** The one-line rendering of one link in an error chain. */
+function messageOf(err: unknown): string {
   if (err instanceof Error) return err.message
   if (typeof err === 'string') return err
   try { return JSON.stringify(err) } catch { return String(err) }

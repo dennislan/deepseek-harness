@@ -22,7 +22,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { expandHomePath } from '@deepseek-ai/dsh-home-paths'
-import type { SessionId } from '@deepseek-ai/dsh-session'
 import {
   type AuthError,
   type Config as PluginConfig,
@@ -196,23 +195,23 @@ export class Auth extends Service {
   /**
    * Return the user id that owns a session, if one is recorded.
    */
-  getSessionUserId(sessionId: SessionId): string | undefined {
+  getSessionUserId(sessionId: string): string | undefined {
     return this.sessionMap[sessionId]
   }
 
   /**
    * Return all sessions that belong to the given user id.
    */
-  getSessionsForUser(userId: string): SessionId[] {
+  getSessionsForUser(userId: string): string[] {
     return Object.entries(this.sessionMap)
       .filter(([, uid]) => uid === userId)
-      .map(([sid]) => sid as SessionId)
+      .map(([sid]) => sid)
   }
 
   /**
    * Record that `sessionId` belongs to `userId`.
    */
-  associateSession(sessionId: SessionId, userId: string): void {
+  associateSession(sessionId: string, userId: string): void {
     this.sessionMap[sessionId] = userId
     void this._persistSessionMap()
   }
@@ -220,7 +219,7 @@ export class Auth extends Service {
   /**
    * Remove the session↔user association.
    */
-  dissociateSession(sessionId: SessionId): void {
+  dissociateSession(sessionId: string): void {
     delete this.sessionMap[sessionId]
     void this._persistSessionMap()
   }
@@ -611,13 +610,15 @@ function setupPlugin(auth: Auth, ctx: Context): void {
   })
 
   // Session lifecycle: auto-associate sessions with the current user.
-  ctx.on('session/created', (session: { id: SessionId }): void => {
+  ;(ctx as unknown as { on(event: string, listener: (e: { id: string }) => void): void })
+    .on('session/created', (session: { id: string }): void => {
     if (auth.isAuthenticated()) {
       auth.associateSession(session.id, auth.getCurrentUser()!.id)
     }
   })
 
-  ctx.on('session/disposed', (session: { id: SessionId }): void => {
+  ;(ctx as unknown as { on(event: string, listener: (e: { id: string }) => void): void })
+    .on('session/disposed', (session: { id: string }): void => {
     auth.dissociateSession(session.id)
   })
 

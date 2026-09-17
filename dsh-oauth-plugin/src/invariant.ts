@@ -1,13 +1,14 @@
 /**
- * Invariant companion for `dsh-oauth-plugin`.
- * @module dsh-oauth-plugin/invariant
+ * Invariant companion for `dsh-oauth`.
+ * No runtime invariant: auth state is process-local in-memory with a
+ * best-effort on-disk map. No independent event stream to compare against.
+ * @module dsh-oauth/invariant
  */
 
 /* jscpd:ignore-start */
 import type { Context } from '@deepseek-ai/cordis'
-import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 
-const PACKAGE_NAME = 'dsh-oauth-plugin'
+const PACKAGE_NAME = 'dsh-oauth'
 
 /** Cordis companion plugin name. */
 export const name = 'dsh-oauth-invariant'
@@ -15,17 +16,16 @@ export const name = 'dsh-oauth-invariant'
 export const inject = ['invariants']
 
 /**
- * No runtime invariant: auth state is process-local in-memory with a
- * best-effort on-disk map. There is no independent event stream to
- * compare against beyond what the service itself owns.
- */
-const install: InvariantInstaller = () => {}
-
-/**
  * Register this package's invariant companion.
- * @param ctx - Cordis context carrying the invariant service.
+ * @param ctx - Cordis context carrying the invariants service.
  * @returns the installed registration's disposer after setup succeeds.
  */
 export const apply = (ctx: Context): Promise<() => void> =>
-  Promise.resolve(ctx.invariants.register(PACKAGE_NAME, install))
+  Promise.resolve(
+    (ctx as unknown as {
+      invariants: {
+        register(name: string, install: () => void | Promise<void>): () => void
+      }
+    }).invariants.register(PACKAGE_NAME, () => {}),
+  )
 /* jscpd:ignore-end */

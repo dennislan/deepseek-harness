@@ -167,6 +167,47 @@ describe('dsh-mcp-plugin live manager', () => {
     }
   })
 
+  it('boots with a stored server whose command no longer exists, reporting it offline', async () => {
+    // A stored stdio server pointing at a deleted executable (an evicted npx
+    // cache path) plus failOnStartupError: true used to reject the plugin's
+    // loader entry, so the whole profile refused to start.
+    const store = await mkdtemp(join(tmpdir(), 'mcp-plugin-dead-'))
+    const storePath = join(store, 'mcp-servers.json')
+    await writeFile(storePath, JSON.stringify({
+      version: STORE_VERSION,
+      servers: {
+        postgres: {
+          transport: 'stdio',
+          serverName: 'postgres',
+          command: '/nonexistent/npx-cache/mcp-server-postgres',
+          args: ['postgres://localhost:5432/db'],
+          env: {},
+          cwd: '',
+          toolCallTimeoutMs: 1000,
+          failOnStartupError: true,
+        },
+      },
+    }))
+    try {
+      const { ctx } = await boot(storePath) // must not reject
+      try {
+        // The manager's own tools are registered, so the dead server is
+        // recoverable without a restart.
+        expect(toolNames(ctx)).toContain('mcp_list')
+        const result = await call(ctx, 'mcp_list', {})
+        expect(result.isError).toBe(false)
+        const servers = (result.value as { servers: Array<{ serverName: string; connected: boolean; error?: string }> }).servers
+        const dead = servers.find(s => s.serverName === 'postgres')
+        expect(dead?.connected).toBe(false)
+        expect(dead?.error).toMatch(/ENOENT|spawn/)
+      } finally {
+        await ctx.fiber.dispose()
+      }
+    } finally {
+      await rm(store, { recursive: true, force: true })
+    }
+  })
+
   it('rejects duplicate add and unknown modify/remove as tool errors', async () => {
     const store = await mkdtemp(join(tmpdir(), 'mcp-plugin-errors-'))
     const { ctx } = await boot(join(store, 'mcp-servers.json'))
