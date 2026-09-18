@@ -56,6 +56,7 @@
     "build": "npx tsc -p tsconfig.standalone.json && npx tsdown --config tsdown.config.ts && node scripts/postbuild.mjs",
     "build:repo": "npx tsc && npx tsdown --config tsdown.config.ts && node scripts/postbuild.mjs",
     "typecheck": "npx tsc --noEmit -p tsconfig.standalone.json",
+    "verify": "node scripts/verify-chip.mjs && node scripts/verify-rail.mjs",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {

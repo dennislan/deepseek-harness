@@ -80,6 +80,42 @@ const ICON_EYE_CLOSED = [
   'M1 1l22 22',
 ].join(' ')
 
+/** Filled avatar glyph — the chip's leading icon in the sidebar foot row. */
+const ICON_USER_FILLED = [
+  'M12 12a5 5 0 100-10 5 5 0 000 10z',
+  'M12 14c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5z',
+].join(' ')
+
+/** Gear glyph — the "设定" menu row's leading icon. */
+const ICON_GEAR = [
+  'M19.14 12.94a7.07 7.07 0 000-1.88l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.61-.22l-2.39.96a7.3 7.3 0 00-1.62-.94l-.36-2.54a.5.5 0 00-.5-.42h-3.84a.5.5 0 00-.5.42l-.36 2.54c-.58.24-1.12.55-1.62.94l-2.39-.96a.5.5 0 00-.61.22L2.65 8.84a.5.5 0 00.12.64l2.03 1.58a7.07 7.07 0 000 1.88l-2.03 1.58a.5.5 0 00-.12.64l1.92 3.32c.13.22.39.31.61.22l2.39-.96c.5.39 1.04.7 1.62.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.58-.24 1.12-.55 1.62-.94l2.39.96c.22.09.48 0 .61-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z',
+].join(' ')
+
+/** Sign-out glyph — the "登出" menu row's leading icon. */
+const ICON_LOGOUT = [
+  'M10 3H5a2 2 0 00-2 2v14a2 2 0 002 2h5v-2H5V5h5V3z',
+  'M17.3 7.3l-1.4 1.4 2.3 2.3H9v2h9.2l-2.3 2.3 1.4 1.4L22 12l-4.7-4.7z',
+].join(' ')
+
+/**
+ * Build a 16px filled icon element for the chip and its menu rows.
+ * @param path - the SVG path data drawn with `currentColor`.
+ * @returns the SVG element.
+ */
+function buildIcon(path: string): SVGSVGElement {
+  const NS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('width', '16')
+  svg.setAttribute('height', '16')
+  svg.setAttribute('fill', 'currentColor')
+  svg.setAttribute('aria-hidden', 'true')
+  const shape = document.createElementNS(NS, 'path')
+  shape.setAttribute('d', path)
+  svg.appendChild(shape)
+  return svg
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function loadWxLogin(): Promise<void> {
@@ -763,13 +799,18 @@ export function apply(_ctx: unknown): void {
     })
   }
 
-  // ── Sidebar user badge (shown when logged in, outside the overlay) ──────────
-  // Injects the user name into the sidebar "设定" trigger row so the row reads
-  // [user name][gear icon]. The harness button is React-owned and re-renders on
-  // wide↔rail toggles and sidebar remounts, so a body-level MutationObserver
-  // re-applies the badge and label hiding after any structural change while a
-  // ResizeObserver tracks the rail state. Clicking the name signs out; clicking
-  // the gear opens settings (React keeps the button's own onClick).
+  // ── Sidebar user chip (shown when logged in, outside the overlay) ───────────
+  // Replaces the sidebar "设置" trigger row's content with a user chip reading
+  // [avatar icon][user name], mirroring the reference layout. The row is a
+  // React-owned button that re-renders on wide↔rail toggles and sidebar
+  // remounts, so a body-level MutationObserver rebuilds the chip after any
+  // structural change while a ResizeObserver tracks the rail state.
+  //
+  // The chip is a `menubutton`: clicking it opens the popup menu below instead
+  // of the settings dialog. The harness supplies that dialog only through the
+  // row's own onClick, which a synthetic click on the row still reaches — that
+  // is how the "设定" item opens the current settings screen. Signing out runs
+  // the same logout flow the overlay used to expose.
 
   // dsh 0.1.5+ gives the trigger a locale-owned aria-label, so attribute-only
   // probing (`:not([aria-label])`) no longer matches it; the conversation area
@@ -778,15 +819,17 @@ export function apply(_ctx: unknown): void {
   // laid-out dialog button in every layout state, so select it geometrically —
   // a version-independent rule.
   const DIALOG_TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"][aria-expanded]'
-  const USER_BADGE_ID = 'dsh-sidebar-user'
+  const USER_CHIP_ID = 'dsh-sidebar-user'
   const RAIL_WIDTH_THRESHOLD = 80
 
   let sidebarTrigger: HTMLButtonElement | null = null
-  let userBadge: HTMLSpanElement | null = null
+  let userChip: HTMLSpanElement | null = null
+  /** The trigger's own slot content, captured before the first substitution. */
+  let originalTriggerContent: Node[] | null = null
   let sidebarObserver: MutationObserver | null = null
   let railObserver: ResizeObserver | null = null
   let currentDisplayName = ''
-  let syncingBadge = false
+  let syncingChip = false
 
   function findSettingsTrigger(): HTMLButtonElement | null {
     let best: HTMLButtonElement | null = null
@@ -805,60 +848,102 @@ export function apply(_ctx: unknown): void {
     return best
   }
 
-  function applyRailState(trigger: HTMLButtonElement): void {
-    const narrow = trigger.getBoundingClientRect().width < RAIL_WIDTH_THRESHOLD
-    if (userBadge && userBadge.parentElement === trigger) {
-      userBadge.classList.toggle('dsh-sidebar-user--hidden', narrow)
+  /**
+   * Hide the trigger's own slot content behind the chip, or restore it. The
+   * content stays mounted (only the chip is hidden), so the harness keeps
+   * owning its label and icon and nothing has to be re-created on restores.
+   * @param trigger - the settings trigger row.
+   * @param hidden - whether the harness content should be hidden.
+   */
+  function setTriggerContentHidden(trigger: HTMLButtonElement, hidden: boolean): void {
+    for (const node of Array.from(trigger.childNodes)) {
+      const el = node as HTMLElement
+      if (el === userChip || el.nodeType !== Node.ELEMENT_NODE) continue
+      el.style.display = hidden ? 'none' : ''
     }
-    // Push the gear to the right edge in wide mode; clear it in rail mode so the
-    // harness's own centered rail layout applies.
-    const gear = trigger.querySelector('svg')
-    if (gear) gear.style.marginLeft = narrow ? '' : 'auto'
   }
 
-  function syncSidebarBadge(): void {
-    if (syncingBadge) return
-    syncingBadge = true
+  function applyRailState(trigger: HTMLButtonElement): void {
+    const narrow = trigger.getBoundingClientRect().width < RAIL_WIDTH_THRESHOLD
+    if (userChip && userChip.parentElement === trigger) {
+      userChip.classList.toggle('dsh-sidebar-user--rail', narrow)
+    }
+  }
+
+  /**
+   * Rebuild the chip's icon + name when either has drifted from the current
+   * user. The name is the only mutable part; the icon is rebuilt with it so the
+   * row never depends on a stale child order.
+   */
+  function renderChipContent(chip: HTMLSpanElement): void {
+    if (chip.dataset.dshName === currentDisplayName) return
+    chip.dataset.dshName = currentDisplayName
+    chip.textContent = ''
+    chip.appendChild(buildIcon(ICON_USER_FILLED))
+    const label = document.createElement('span')
+    label.className = 'dsh-sidebar-user-name'
+    label.textContent = currentDisplayName
+    chip.appendChild(label)
+  }
+
+  function buildUserChip(trigger: HTMLButtonElement): HTMLSpanElement {
+    const chip = document.createElement('span')
+    chip.id = USER_CHIP_ID
+    chip.title = '用户菜单'
+    chip.setAttribute('role', 'menubutton')
+    chip.setAttribute('aria-haspopup', 'menu')
+    chip.setAttribute('aria-expanded', 'false')
+    chip.tabIndex = 0
+    chip.addEventListener('click', (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (userMenu) { closeUserMenu(); return }
+      openUserMenu(chip)
+    })
+    chip.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); chip.click() }
+    })
+    // Capture the row's own content before the first substitution so a later
+    // sign-out can put it back exactly as the harness rendered it.
+    if (originalTriggerContent === null) originalTriggerContent = Array.from(trigger.childNodes)
+    renderChipContent(chip)
+    trigger.insertBefore(chip, trigger.firstChild)
+    return chip
+  }
+
+  function syncSidebarChip(): void {
+    if (syncingChip) return
+    syncingChip = true
     try {
       const trigger = findSettingsTrigger()
       if (!trigger) return
       if (sidebarTrigger !== trigger) {
         sidebarTrigger = trigger
-        userBadge = null
+        userChip = null
         railObserver?.disconnect()
         railObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => applyRailState(trigger)) : null
         railObserver?.observe(trigger)
       }
-      if (!userBadge || userBadge.parentElement !== trigger) {
-        userBadge = trigger.querySelector<HTMLSpanElement>('#' + USER_BADGE_ID)
-        if (!userBadge) {
-          userBadge = document.createElement('span')
-          userBadge.id = USER_BADGE_ID
-          userBadge.title = '用户菜单'
-          userBadge.setAttribute('role', 'menubutton')
-          userBadge.setAttribute('aria-haspopup', 'menu')
-          userBadge.setAttribute('aria-expanded', 'false')
-          userBadge.tabIndex = 0
-          userBadge.addEventListener('click', (e: MouseEvent) => {
-            e.preventDefault()
-            e.stopPropagation()
-            if (userMenu) { closeUserMenu(); return }
-            openUserMenu(userBadge)
-          })
-          userBadge.addEventListener('keydown', (e: KeyboardEvent) => {
-            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); userBadge?.click() }
-          })
-          trigger.insertBefore(userBadge, trigger.firstChild)
-        }
+      if (!userChip || userChip.parentElement !== trigger) {
+        userChip = trigger.querySelector<HTMLSpanElement>('#' + USER_CHIP_ID)
+        if (!userChip) userChip = buildUserChip(trigger)
       }
-      if (userBadge.textContent !== currentDisplayName) userBadge.textContent = currentDisplayName
-      for (const span of trigger.querySelectorAll('span')) {
-        if (span !== userBadge && span.style.display !== 'none') span.style.display = 'none'
-      }
+      renderChipContent(userChip)
+      setTriggerContentHidden(trigger, true)
       applyRailState(trigger)
     } finally {
-      syncingBadge = false
+      syncingChip = false
     }
+  }
+
+  /**
+   * Open the harness settings dialog by forwarding a click to the trigger row
+   * the chip is mounted in, which is the only route to its `setOpen(true)`
+   * handler. The chip suppresses its own click so the row keeps that handler.
+   */
+  function openSettings(): void {
+    if (!sidebarTrigger || !sidebarTrigger.isConnected) return
+    sidebarTrigger.click()
   }
 
   async function logout(): Promise<void> {
@@ -869,21 +954,23 @@ export function apply(_ctx: unknown): void {
     store.setState({ user: null, error: null })
   }
 
-  // ── User menu: popup anchored above the bottom-left badge ───────────────
-  // The badge is pinned to the viewport's bottom edge, so the menu grows
-  // upward. Items are data rows: append a row to USER_MENU_ITEMS for new user
+  // ── User menu: popup anchored below the user chip ───────────────────────
+  // The chip sits in the sidebar foot, so the menu opens over the conversation
+  // area. Items are data rows: append a row to USER_MENU_ITEMS for new user
   // actions (profile, API keys, …).
   const USER_MENU_ID = 'dsh-user-menu'
 
   interface UserMenuItem {
     id: string
     label: string
+    icon: string
     danger?: boolean
     action: () => void | Promise<void>
   }
 
   const USER_MENU_ITEMS: UserMenuItem[] = [
-    { id: 'logout', label: '退出登录', danger: true, action: () => void logout() },
+    { id: 'settings', label: '设定', icon: ICON_GEAR, action: () => { openSettings() } },
+    { id: 'logout', label: '登出', icon: ICON_LOGOUT, danger: true, action: () => void logout() },
   ]
 
   let userMenu: HTMLElement | null = null
@@ -894,7 +981,7 @@ export function apply(_ctx: unknown): void {
     userMenu = null
     userMenuTeardown?.()
     userMenuTeardown = null
-    userBadge?.setAttribute('aria-expanded', 'false')
+    userChip?.setAttribute('aria-expanded', 'false')
   }
 
   function openUserMenu(anchor: HTMLElement): void {
@@ -906,7 +993,10 @@ export function apply(_ctx: unknown): void {
       const row = document.createElement('button')
       row.type = 'button'
       row.setAttribute('role', 'menuitem')
-      row.textContent = item.label
+      row.appendChild(buildIcon(item.icon))
+      const label = document.createElement('span')
+      label.textContent = item.label
+      row.appendChild(label)
       if (item.danger) row.classList.add('dsh-user-menu-item--danger')
       row.addEventListener('click', () => {
         closeUserMenu()
@@ -918,21 +1008,25 @@ export function apply(_ctx: unknown): void {
     userMenu = menu
     anchor.setAttribute('aria-expanded', 'true')
 
-    // Pin the menu just above the anchor, clamped to the viewport's left and
-    // right edges.
+    // Open the menu over the row that owns the chip: aligned to the anchor's
+    // left edge, clamped to the viewport, and flipped above the anchor when the
+    // sidebar foot leaves no room below (the rail keeps the row at the bottom).
     const GAP = 6
     const rect = anchor.getBoundingClientRect()
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8))
     menu.style.left = `${left}px`
-    menu.style.bottom = `${Math.max(8, window.innerHeight - rect.top + GAP)}px`
+    const belowTop = rect.bottom + GAP
+    const fitsBelow = belowTop + menu.offsetHeight <= window.innerHeight - 8
+    if (fitsBelow) menu.style.top = `${belowTop}px`
+    else menu.style.bottom = `${Math.max(8, window.innerHeight - rect.top + GAP)}px`
 
-    // Close on outside mousedown (the badge's own mousedown is excluded so the
+    // Close on outside mousedown (the chip's own mousedown is excluded so the
     // following click toggles it), on Escape, and on viewport resizes that
     // invalidate the fixed coordinates.
     const onDown = (ev: MouseEvent): void => {
       const target = ev.target as Node | null
       if (userMenu?.contains(target)) return
-      if (target instanceof Element && target.closest('#' + USER_BADGE_ID)) return
+      if (target instanceof Element && target.closest('#' + USER_CHIP_ID)) return
       closeUserMenu()
     }
     const onKey = (ev: KeyboardEvent): void => {
@@ -953,10 +1047,10 @@ export function apply(_ctx: unknown): void {
     injectStyles()
     currentDisplayName = displayName
     if (!sidebarObserver) {
-      sidebarObserver = new MutationObserver(() => syncSidebarBadge())
+      sidebarObserver = new MutationObserver(() => syncSidebarChip())
       sidebarObserver.observe(document.body, { childList: true, subtree: true })
     }
-    syncSidebarBadge()
+    syncSidebarChip()
   }
 
   function hideLogoutButton(): void {
@@ -965,14 +1059,22 @@ export function apply(_ctx: unknown): void {
     sidebarObserver = null
     railObserver?.disconnect()
     railObserver = null
-    if (sidebarTrigger) {
-      for (const span of sidebarTrigger.querySelectorAll('span')) {
-        if (span !== userBadge && span.style.display === 'none') span.style.display = ''
+    const trigger = sidebarTrigger
+    if (trigger) {
+      // Restore whatever the harness rendered before the first substitution.
+      userChip?.remove()
+      if (originalTriggerContent !== null) {
+        const captured = originalTriggerContent
+        originalTriggerContent = null
+        trigger.textContent = ''
+        for (const node of captured) {
+          if (node === userChip) continue
+          trigger.appendChild(node)
+        }
       }
-      const gear = sidebarTrigger.querySelector('svg')
-      if (gear) gear.style.marginLeft = ''
+      setTriggerContentHidden(trigger, false)
     }
-    if (userBadge) { userBadge.remove(); userBadge = null }
+    userChip = null
     sidebarTrigger = null
   }
 
@@ -1639,28 +1741,45 @@ const css = `
   opacity: 0.6;
 }
 
-/* ── Sidebar user badge (injected into the "设定" trigger row) ───────────── */
+/* ── Sidebar user chip (replaces the "设置" trigger row's content) ─────────── */
+/* The row is the harness's button; the chip only supplies [icon][name] and
+   inherits the row's typography and hover chrome. */
 #dsh-sidebar-user {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   overflow: hidden;
   white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
   /* Harness theme label color (light/dark); overlay palette as fallback. */
   color: var(--dsw-alias-label-primary, rgba(255,255,255,0.88));
   cursor: pointer;
   user-select: none;
 }
-#dsh-sidebar-user:hover {
-  color: var(--dsw-alias-brand-primary, var(--dsh-accent));
+#dsh-sidebar-user svg {
+  flex: none;
+  color: var(--dsw-alias-label-secondary, rgba(255,255,255,0.62));
 }
-#dsh-sidebar-user.dsh-sidebar-user--hidden {
+#dsh-sidebar-user .dsh-sidebar-user-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Rail mode: the row collapses to a centered 36x36 box, so the chip does too. */
+#dsh-sidebar-user.dsh-sidebar-user--rail {
+  flex: none;
+  justify-content: center;
+  gap: 0;
+}
+#dsh-sidebar-user.dsh-sidebar-user--rail .dsh-sidebar-user-name {
   display: none;
 }
 
-/* ── User menu (popup anchored above the bottom-left badge) ─────────────── */
+/* ── User menu (popup anchored to the user chip) ────────────────────────── */
 #dsh-user-menu {
   position: fixed;
   z-index: 10000;
@@ -1690,6 +1809,13 @@ const css = `
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#dsh-user-menu button svg {
+  flex: none;
+  color: var(--dsw-alias-label-secondary, rgba(255,255,255,0.62));
 }
 #dsh-user-menu button:hover {
   background: var(--dsw-alias-interactive-bg-hover, rgba(255,255,255,0.1));
@@ -1700,6 +1826,9 @@ const css = `
 }
 #dsh-user-menu button.dsh-user-menu-item--danger {
   color: var(--dsw-alias-state-error-primary, #f87171);
+}
+#dsh-user-menu button.dsh-user-menu-item--danger svg {
+  color: inherit;
 }
 #dsh-user-menu button.dsh-user-menu-item--danger:hover {
   background: var(--dsw-alias-interactive-bg-hover-danger, rgba(248,113,113,0.12));

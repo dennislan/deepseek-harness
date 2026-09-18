@@ -11,7 +11,7 @@ OAuth / login plugin for DeepSeek Harness. 支持用户名密码登录和微信�
 - **模式切换** — 表单右上角 WeChat / 账号图标可切换两种登录方式。
 - **会话与工作区按用户隔离** — 认证后新建的会话与所选工作区自动关联当前 userId 并持久化；服务端与客户端双层过滤，未登录用户看不到任何会话或工作区。
 - **高品质登录 UI** — 全屏分割布局：左侧动态渐变品牌面板，右侧简洁表单卡片。
-- **侧边栏用户徽章** — 登录后用户名显示在左侧导航左下角「设定」行（用户名居左、齿轮图标居右），文字颜色随当前 harness 主题（浅色/深色）自动适配。点击用户名会在其上方弹出一个小型用户菜单（当前含「退出登录」，可在 `USER_MENU_ITEMS` 中追加更多用户功能）；侧边栏折叠为窄轨时徽章自动隐藏。
+- **侧边栏用户项** — 登录后左侧导航左下角那一行显示「头像图标 + 用户名」，替换 harness 原有的「齿轮 + 设置」内容。点击该用户项弹出菜单：**设定** 打开 harness 当前的设置界面（复用该行自身的 onClick），**登出** 执行登出流程。可在 `USER_MENU_ITEMS` 中追加更多用户功能；侧边栏折叠为窄轨时只保留头像图标。
 
 ## 安装
 
@@ -189,7 +189,7 @@ dsh plugin --profile web add dsh-oauth
 - **exact route 覆盖** — host 以 exact route 注册 `/api/workspace.list`、`/api/workspace.create`、`/api/session.list` 与 `/api/session.history`，覆盖内置 handler 实现隔离。harness 未提供按用户过滤的官方接口，这是当前唯一的服务端隔离手段。
 - **`window.fetch` 拦截** — 客户端覆盖全局 `fetch`，镜像服务端过滤 `/api/session.list` 与 `/api/workspace.list` 的响应，避免侧边栏渲染未授权内容。
 - **`document.body` 注入** — 登录遮罩直接追加到 `document.body`，未经官方 UI 插槽协议注册。
-- **侧边栏「设定」按钮结构** — 用户名徽章依赖侧边栏设置触发按钮位于视口最左侧（其次最底部）的 `button[aria-haspopup="dialog"]` 位置：徽章作为其首个子节点注入，通过 MutationObserver 在 harness 重渲染后自愈，在窄轨（rail）模式下隐藏，文字颜色跟随 harness 主题 token。harness 若把设置触发按钮移出左下角侧边栏，徽章注入可能失效。
+- **侧边栏用户项结构** — 用户项依赖侧边栏设置触发按钮位于视口最左侧（其次最底部）的 `button[aria-haspopup="dialog"]` 位置：用户项作为其首个子节点注入，该行原有内容只被隐藏（保持挂载，登录态退出时还原），通过 MutationObserver 在 harness 重渲染后自愈；窄轨（rail）模式下只显示头像图标，文字颜色跟随 harness 主题 token。菜单中的「设定」通过向该行转发一次点击来打开设置界面，因此 harness 若改变该行的打开方式（例如改为由外部状态控制、不再响应自身 onClick），「设定」将失效。
 
 若 harness 后续提供官方按用户过滤 API 或 UI 扩展点，本插件将优先迁移，不再依赖上述非官方机制。
 

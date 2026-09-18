@@ -8,7 +8,7 @@ OAuth / login plugin for DeepSeek Harness. Supports username/password login and 
 - **WeChat Website App QR-code login** — follows the official WeChat OAuth 2.0 flow: the official `wxLogin.js` renders the QR code, and WeChat's callback completes login after the user confirms.
 - **Sessions and workspaces isolated per user** — server-side exact-route overrides filter workspaces and sessions; client-side `window.fetch` interception mirrors the filter in the sidebar.
 - **High-quality login UI** — full-screen split layout: an animated gradient brand panel on the left, a clean form card on the right.
-- **Sidebar user badge** — the username appears in the bottom-left "Settings" row after login; clicking it opens a small user menu.
+- **Sidebar user chip** — after login the bottom-left settings row shows an avatar icon followed by the username, replacing the harness's gear + "Settings" content. Clicking the chip opens a popup menu with **设定** (opens the harness settings dialog) and **登出** (signs out). Collapsed into the sidebar rail, the chip keeps the icon and drops the name.
 
 ## Installation
 
